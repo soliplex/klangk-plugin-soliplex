@@ -224,17 +224,24 @@ class SoliplexClient {
     final runId = runs.keys.first;
 
     final text = await _streamRun(
-        soliplexUrl, roomId, threadId, runId, question, onChunk);
+        soliplexUrl, roomId, threadId, runId,
+        [sox.UserMessage(id: _messageId(0), content: question)], onChunk);
     return (text: text, threadId: threadId);
   }
 
   /// Continue an existing thread: create a follow-up run on [threadId] and
   /// stream the answer. This is what makes multi-turn conversations with a
-  /// soliplex room possible — the backend keeps the thread's history, so the
-  /// model sees prior turns. Pair with the [threadId] returned by [queryRoom].
+  /// soliplex room possible.
+  ///
+  /// [priorMessages] is the conversation so far (user/assistant turns). The
+  /// AG-UI run input carries the full message list — the backend does NOT
+  /// replay a thread's history into a new run on its own, so the caller must
+  /// supply it for the model to see earlier turns. The new [message] is
+  /// appended as the latest user turn. Returns the assistant's answer.
   Future<String> replyToThread(
     String roomId,
     String threadId,
+    List<sox.Message> priorMessages,
     String message, {
     void Function(String delta)? onChunk,
   }) async {
@@ -262,13 +269,21 @@ class SoliplexClient {
       throw Exception('No run_id returned for thread $threadId');
     }
 
+    final messages = <sox.Message>[
+      ...priorMessages,
+      sox.UserMessage(id: _messageId(priorMessages.length), content: message),
+    ];
     return _streamRun(
-        soliplexUrl, roomId, threadId, runId, message, onChunk);
+        soliplexUrl, roomId, threadId, runId, messages, onChunk);
   }
+
+  /// Stable-ish unique message id for a run input.
+  String _messageId(int index) =>
+      'msg-${DateTime.now().millisecondsSinceEpoch}-$index';
 
   /// Stream a single AG-UI run, accumulating assistant text deltas and
   /// forwarding each to [onChunk] as it arrives. Shared by [queryRoom] and
-  /// [replyToThread].
+  /// [replyToThread]. [messages] is the full conversation sent to the run.
   ///
   /// Streams via soliplex_client's AgUiStreamClient rather than hand-rolling
   /// the SSE. The transport's AuthenticatedHttpClient injects the bearer;
@@ -278,7 +293,7 @@ class SoliplexClient {
     String roomId,
     String threadId,
     String runId,
-    String message,
+    List<sox.Message> messages,
     void Function(String delta)? onChunk,
   ) async {
     final token = await _getAccessToken();
@@ -292,12 +307,7 @@ class SoliplexClient {
       final input = sox.SimpleRunAgentInput(
         threadId: threadId,
         runId: runId,
-        messages: [
-          sox.UserMessage(
-            id: 'msg-${DateTime.now().millisecondsSinceEpoch}',
-            content: message,
-          ),
-        ],
+        messages: messages,
       );
       final buffer = StringBuffer();
       await for (final outcome

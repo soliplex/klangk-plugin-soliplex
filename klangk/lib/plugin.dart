@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import 'package:soliplex_client/soliplex_client.dart' as sox;
 
 import 'soliplex_tools.dart';
 
@@ -15,6 +16,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   bool _authenticated = false;
   bool _loggingIn = false;
   String? _loginError;
+
+  /// In-memory conversation history per soliplex thread, so multi-turn
+  /// [soliplex_reply] turns carry context (the AG-UI run input must include
+  /// prior turns; the backend does not replay them). Session-scoped — cleared
+  /// on reload; the thread itself persists server-side.
+  final Map<String, List<sox.Message>> _threadHistory = {};
+
+  int _msgSeq = 0;
+  String _mid(String p) => '$p-${DateTime.now().millisecondsSinceEpoch}-${_msgSeq++}';
 
   SoliplexPlugin() {
     _refreshAuthState();
@@ -110,6 +120,11 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
       final result = await SoliplexClient()
           .queryRoom(roomId, question, onChunk: onChunk);
       await _refreshAuthState();
+      // Seed this thread's history so a later soliplex_reply has context.
+      _threadHistory[result.threadId] = [
+        sox.UserMessage(id: _mid('u'), content: question),
+        sox.AssistantMessage(id: _mid('a'), content: result.text),
+      ];
       // Surface the thread id so the agent can continue this conversation in
       // the same soliplex thread via soliplex_reply (multi-turn).
       return '${result.text}\n\n[soliplex thread_id: ${result.threadId} — '
@@ -138,9 +153,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     if (threadId.isEmpty) return 'Error: thread_id is required';
     if (message.isEmpty) return 'Error: message is required';
     try {
+      final prior = _threadHistory[threadId] ?? <sox.Message>[];
       final result = await SoliplexClient()
-          .replyToThread(roomId, threadId, message, onChunk: onChunk);
+          .replyToThread(roomId, threadId, prior, message, onChunk: onChunk);
       await _refreshAuthState();
+      _threadHistory[threadId] = [
+        ...prior,
+        sox.UserMessage(id: _mid('u'), content: message),
+        sox.AssistantMessage(id: _mid('a'), content: result),
+      ];
       return '$result\n\n[soliplex thread_id: $threadId]';
     } catch (e) {
       await _refreshAuthState();
