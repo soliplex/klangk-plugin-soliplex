@@ -94,19 +94,25 @@ function textResult(text: string) {
   return { content: [{ type: "text", text }], details: {} };
 }
 
-function trunc(s: unknown, n = 100): string {
-  const t = typeof s === "string" ? s : s == null ? "" : String(s);
-  return t.length > n ? `${t.slice(0, n)}…` : t;
+// Collapse whitespace/newlines so a value renders on a single line.
+function oneLine(s: unknown): string {
+  return (typeof s === "string" ? s : s == null ? "" : String(s))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-// A tool-call line component. We can't value-import pi's Text from a raw .ts
-// extension (pi-tui is nested under pi's global install and unreachable by Node
+// A single-line tool-call component. We can't value-import pi's Text from a raw
+// .ts extension (pi-tui is nested under pi's global install, unreachable by Node
 // ESM resolution from the extension dir — pi's own shipped extensions only
 // `import type` from the pi package). So implement pi-tui's public `Component`
-// interface directly: render(width) -> lines, plus a no-op invalidate().
-function callLine(line: string): { render: (w: number) => string[]; invalidate: () => void } {
+// interface directly. CRITICAL: render() MUST truncate to the given width — pi
+// crashes if a rendered line exceeds the terminal width.
+function callLine(text: string): { render: (w: number) => string[]; invalidate: () => void } {
   return {
-    render: (_w: number) => [line],
+    render: (width: number) => {
+      const w = typeof width === "number" && width > 4 ? width : 80;
+      return [text.length <= w ? text : `${text.slice(0, w - 1)}…`];
+    },
     invalidate: () => {},
   };
 }
@@ -144,7 +150,9 @@ export default function (pi: any) {
     }),
     renderCall(args: any) {
       const a = args ?? {};
-      return callLine(`room: ${a.room_id ?? "?"}  prompt: ${trunc(a.question)}`);
+      return callLine(
+        `soliplex_query(roomId: ${oneLine(a.room_id) || "?"}, message: ${oneLine(a.question)})`,
+      );
     },
     async execute(
       _id: string,
@@ -181,8 +189,8 @@ export default function (pi: any) {
     renderCall(args: any) {
       const a = args ?? {};
       return callLine(
-        `room: ${a.room_id ?? "?"}  thread: ${trunc(a.thread_id, 8)}  ` +
-          `prompt: ${trunc(a.message)}`,
+        `soliplex_reply(roomId: ${oneLine(a.room_id) || "?"}, ` +
+          `threadId: ${oneLine(a.thread_id)}, message: ${oneLine(a.message)})`,
       );
     },
     async execute(
