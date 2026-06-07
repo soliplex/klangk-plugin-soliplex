@@ -329,6 +329,15 @@ class SoliplexClient {
           if (event is sox.TextMessageContentEvent) {
             buffer.write(event.delta);
             onChunk?.call(event.delta);
+          } else {
+            // Keepalive: forward an empty chunk for every other AG-UI event
+            // (run/activity/tool/thinking). The klangk bridge bounds the gap
+            // BETWEEN chunks (KLANGK_BRIDGE_TIMEOUT_SECONDS, default 30s); a
+            // long-but-active run (RAG + LLM, multi-step tools) emits these
+            // frequently, so relaying them resets the idle timer and the
+            // request never times out — even past 30s/2min. Empty deltas add
+            // nothing to the answer text. (See mcdonc/klangk#82.)
+            onChunk?.call('');
           }
         }
       }
