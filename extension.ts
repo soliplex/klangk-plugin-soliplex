@@ -94,6 +94,23 @@ function textResult(text: string) {
   return { content: [{ type: "text", text }], details: {} };
 }
 
+function trunc(s: unknown, n = 100): string {
+  const t = typeof s === "string" ? s : s == null ? "" : String(s);
+  return t.length > n ? `${t.slice(0, n)}…` : t;
+}
+
+// A tool-call line component. We can't value-import pi's Text from a raw .ts
+// extension (pi-tui is nested under pi's global install and unreachable by Node
+// ESM resolution from the extension dir — pi's own shipped extensions only
+// `import type` from the pi package). So implement pi-tui's public `Component`
+// interface directly: render(width) -> lines, plus a no-op invalidate().
+function callLine(line: string): { render: (w: number) => string[]; invalidate: () => void } {
+  return {
+    render: (_w: number) => [line],
+    invalidate: () => {},
+  };
+}
+
 export default function (pi: any) {
   if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
 
@@ -125,6 +142,10 @@ export default function (pi: any) {
       }),
       question: Type.String({ description: "The question to ask." }),
     }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      return callLine(`room: ${a.room_id ?? "?"}  prompt: ${trunc(a.question)}`);
+    },
     async execute(
       _id: string,
       params: { room_id: string; question: string },
@@ -157,6 +178,13 @@ export default function (pi: any) {
       }),
       message: Type.String({ description: "The follow-up message." }),
     }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      return callLine(
+        `room: ${a.room_id ?? "?"}  thread: ${trunc(a.thread_id, 8)}  ` +
+          `prompt: ${trunc(a.message)}`,
+      );
+    },
     async execute(
       _id: string,
       params: { room_id: string; thread_id: string; message: string },
