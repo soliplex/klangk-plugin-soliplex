@@ -47,28 +47,41 @@ Both are git deps so the package resolves on any machine/CI.
 
 ## Consuming from the Klangk app
 
-Point the app's plugin aggregator (or `dependency_overrides`) at this package:
+This follows Klangk `main`'s plugin convention: a plugin repo holds its Flutter
+package under `klangk/`. Add an entry to your `plugins.yaml`
+(`$KLANGK_PLUGINS_DIR/plugins.yaml`):
 
 ```yaml
-dependencies:
-  klangk_plugin_soliplex:
-    git:
-      url: https://github.com/soliplex/klangk-plugin-soliplex.git
-      ref: main
+plugins:
+  - name: soliplex
+    git: https://github.com/soliplex/klangk-plugin-soliplex.git
+    ref: main
 ```
 
+then regenerate the aggregator and rebuild:
+
+```bash
+update-plugins                       # scripts/update_plugins.py — vendors the repo
+python3 scripts/import_dart_plugins.py   # scans <name>/klangk/, writes createAllPlugins()
+cd src/frontend && flutter pub get && flutter build
+```
+
+`import_dart_plugins.py` finds `soliplex/klangk/lib/plugin.dart`, sees
+`class SoliplexPlugin extends ToolPlugin`, and emits it into `createAllPlugins()`.
 No `pubspec_overrides` for `klangk_plugin_api` is needed — the streaming API is
 upstream as of klangk `main`.
 
 ## Layout
 
 ```
-lib/
-  klangk_plugin_soliplex.dart   # barrel: exports SoliplexPlugin
-  plugin.dart                   # ToolPlugin: handlers + streamingHandlers + auth overlay
-  soliplex_tools.dart           # SoliplexClient: listRooms / queryRoom(onChunk)
-  soliplex_auth_result.dart
-  soliplex_platform.dart        # conditional export (native/web)
-  soliplex_platform_native.dart # shared_preferences + flutter_appauth
-  soliplex_platform_web.dart    # localStorage + popup
+klangk/                           # Flutter package (main's plugin convention)
+  pubspec.yaml
+  lib/
+    klangk_plugin_soliplex.dart   # barrel: exports SoliplexPlugin
+    plugin.dart                   # ToolPlugin: handlers + streamingHandlers + auth overlay
+    soliplex_tools.dart           # SoliplexClient: listRooms / queryRoom(onChunk)
+    soliplex_auth_result.dart
+    soliplex_platform.dart        # conditional export (native/web)
+    soliplex_platform_native.dart # shared_preferences + flutter_appauth
+    soliplex_platform_web.dart    # localStorage + popup
 ```
