@@ -296,10 +296,20 @@ class SoliplexClient {
     List<sox.Message> messages,
     void Function(String delta)? onChunk,
   ) async {
-    final token = await _getAccessToken();
+    // Auth is optional: a no-auth Soliplex deployment needs no bearer. Only
+    // wrap the client with the authenticator when we actually have a token.
+    String token = '';
+    try {
+      token = await _getAccessToken();
+    } catch (_) {
+      // No token — proceed unauthenticated (no-auth server).
+    }
+    final inner = sox.DartHttpClient();
     final agui = sox.AgUiStreamClient(
       httpTransport: sox.HttpTransport(
-        client: sox.AuthenticatedHttpClient(sox.DartHttpClient(), () => token),
+        client: token.isNotEmpty
+            ? sox.AuthenticatedHttpClient(inner, () => token)
+            : inner,
       ),
       urlBuilder: sox.UrlBuilder('$soliplexUrl/api/v1'),
     );
