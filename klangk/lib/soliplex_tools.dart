@@ -189,9 +189,10 @@ class SoliplexClient {
     return [];
   }
 
-  /// Query a room by creating a thread, posting a question, and
-  /// collecting the streamed response.
-  Future<String> queryRoom(
+  /// Query a room by creating a thread, posting a question, and collecting the
+  /// streamed response. Returns the answer [text] plus the new [threadId] so a
+  /// caller can continue the conversation via [replyToThread] (multi-turn).
+  Future<({String text, String threadId})> queryRoom(
     String roomId,
     String question, {
     void Function(String delta)? onChunk,
@@ -222,9 +223,64 @@ class SoliplexClient {
     }
     final runId = runs.keys.first;
 
-    // 2. Stream the run via soliplex_client's AgUiStreamClient instead of
-    // hand-rolling the SSE. The transport's AuthenticatedHttpClient injects
-    // the bearer; getToken is synchronous, so pre-fetch (and refresh) once.
+    final text = await _streamRun(
+        soliplexUrl, roomId, threadId, runId, question, onChunk);
+    return (text: text, threadId: threadId);
+  }
+
+  /// Continue an existing thread: create a follow-up run on [threadId] and
+  /// stream the answer. This is what makes multi-turn conversations with a
+  /// soliplex room possible — the backend keeps the thread's history, so the
+  /// model sees prior turns. Pair with the [threadId] returned by [queryRoom].
+  Future<String> replyToThread(
+    String roomId,
+    String threadId,
+    String message, {
+    void Function(String delta)? onChunk,
+  }) async {
+    final soliplexUrl = await _getSoliplexUrl();
+    final headers = await _getHeaders();
+
+    // Create a new run on the existing thread: POST .../agui/{threadId}.
+    final runResp = await http.post(
+      Uri.parse('$soliplexUrl/api/v1/rooms/$roomId/agui/$threadId'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
+    if (runResp.statusCode == 401) {
+      await clearStoredTokens();
+      throw Exception(
+          'Not authenticated. Click "Connect to Soliplex" to log in.');
+    }
+    if (runResp.statusCode != 200) {
+      throw Exception('Failed to create run on thread $threadId: '
+          '${runResp.statusCode} ${runResp.body}');
+    }
+    final runData = jsonDecode(runResp.body) as Map<String, dynamic>;
+    final runId = runData['run_id'] as String?;
+    if (runId == null) {
+      throw Exception('No run_id returned for thread $threadId');
+    }
+
+    return _streamRun(
+        soliplexUrl, roomId, threadId, runId, message, onChunk);
+  }
+
+  /// Stream a single AG-UI run, accumulating assistant text deltas and
+  /// forwarding each to [onChunk] as it arrives. Shared by [queryRoom] and
+  /// [replyToThread].
+  ///
+  /// Streams via soliplex_client's AgUiStreamClient rather than hand-rolling
+  /// the SSE. The transport's AuthenticatedHttpClient injects the bearer;
+  /// getToken is synchronous, so pre-fetch (and refresh) once.
+  Future<String> _streamRun(
+    String soliplexUrl,
+    String roomId,
+    String threadId,
+    String runId,
+    String message,
+    void Function(String delta)? onChunk,
+  ) async {
     final token = await _getAccessToken();
     final agui = sox.AgUiStreamClient(
       httpTransport: sox.HttpTransport(
@@ -239,7 +295,7 @@ class SoliplexClient {
         messages: [
           sox.UserMessage(
             id: 'msg-${DateTime.now().millisecondsSinceEpoch}',
-            content: question,
+            content: message,
           ),
         ],
       );

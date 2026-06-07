@@ -37,11 +37,13 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   Map<String, ToolHandler> get handlers => {
         'soliplex_list_rooms': _listRooms,
         'soliplex_query': _query,
+        'soliplex_reply': _reply,
       };
 
   @override
   Map<String, StreamingToolHandler> get streamingHandlers => {
         'soliplex_query': _queryStream,
+        'soliplex_reply': _replyStream,
       };
 
   late final _overlay = _SoliplexAuthOverlay(
@@ -108,10 +110,41 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
       final result = await SoliplexClient()
           .queryRoom(roomId, question, onChunk: onChunk);
       await _refreshAuthState();
-      return result;
+      // Surface the thread id so the agent can continue this conversation in
+      // the same soliplex thread via soliplex_reply (multi-turn).
+      return '${result.text}\n\n[soliplex thread_id: ${result.threadId} — '
+          'continue with soliplex_reply(room_id, thread_id, message)]';
     } catch (e) {
       await _refreshAuthState();
       return 'Error querying Soliplex: $e';
+    }
+  }
+
+  Future<String> _reply(Map<String, dynamic> request) =>
+      _runReply(request, null);
+
+  Future<String> _replyStream(
+          Map<String, dynamic> request, ToolChunkSink emit) =>
+      _runReply(request, emit);
+
+  /// Continue an existing soliplex thread (multi-turn). Requires `thread_id`
+  /// (from a prior soliplex_query) and a `message`; the soliplex backend keeps
+  /// the thread history so the model sees the earlier turns.
+  Future<String> _runReply(
+      Map<String, dynamic> request, ToolChunkSink? onChunk) async {
+    final roomId = request['room_id'] as String? ?? 'search';
+    final threadId = request['thread_id'] as String? ?? '';
+    final message = request['message'] as String? ?? '';
+    if (threadId.isEmpty) return 'Error: thread_id is required';
+    if (message.isEmpty) return 'Error: message is required';
+    try {
+      final result = await SoliplexClient()
+          .replyToThread(roomId, threadId, message, onChunk: onChunk);
+      await _refreshAuthState();
+      return '$result\n\n[soliplex thread_id: $threadId]';
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error replying to Soliplex thread: $e';
     }
   }
 }
