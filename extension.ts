@@ -181,21 +181,21 @@ export default function (pi: any) {
       "history, so earlier turns stay in context. Long answers stream.",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the thread." }),
+      message: Type.String({ description: "The follow-up message." }),
       thread_id: Type.String({
         description: "thread_id from a prior soliplex_query result.",
       }),
-      message: Type.String({ description: "The follow-up message." }),
     }),
     renderCall(args: any) {
       const a = args ?? {};
       return callLine(
         `soliplex_reply(roomId: ${oneLine(a.room_id) || "?"}, ` +
-          `threadId: ${oneLine(a.thread_id)}, message: ${oneLine(a.message)})`,
+          `message: ${oneLine(a.message)}, threadId: ${oneLine(a.thread_id)})`,
       );
     },
     async execute(
       _id: string,
-      params: { room_id: string; thread_id: string; message: string },
+      params: { room_id: string; message: string; thread_id: string },
       _signal: AbortSignal | undefined,
       onUpdate: any,
     ) {
@@ -204,8 +204,8 @@ export default function (pi: any) {
           "soliplex_reply",
           {
             room_id: params.room_id,
-            thread_id: params.thread_id,
             message: params.message,
+            thread_id: params.thread_id,
           },
           onUpdate,
         );
