@@ -28,6 +28,90 @@ Future<String?> _loadBundledDefaultUrl() async {
 final SoliplexServerRegistry soliplexServers =
     SoliplexServerRegistry(defaultUrlLoader: _loadBundledDefaultUrl);
 
+/// Accumulates RAG citations seen across an AG-UI run so they can be appended
+/// to the answer text as a compact "Sources" list (CITATIONS PROTOTYPE).
+///
+/// WHY a separate object: the citation data lives in AG-UI *state*, not in the
+/// text deltas. The backend emits a `StateSnapshotEvent` (full state) and/or
+/// `StateDeltaEvent`s (RFC-6902 JSON Patch) whose `rag` namespace holds the
+/// retrieved chunks (see soliplex_client `citation_extractor.dart` /
+/// `rag_snapshot.dart`). To resolve citations we must replay those state events
+/// to reconstruct the current state, then diff against the previous state — the
+/// exact contract `CitationExtractor.extractNew(prev, curr)` expects. Keeping
+/// that bookkeeping here (a) isolates the live-SSE-coupled `_streamRun` from it
+/// and (b) makes the accumulation logic a plain, unit-testable unit (the
+/// soliplex_client transport in `_streamRun` is coverage-ignored; this is not).
+class CitationAccumulator {
+  CitationAccumulator({sox.CitationExtractor? extractor})
+      : _extractor = extractor ?? sox.CitationExtractor();
+
+  final sox.CitationExtractor _extractor;
+
+  /// The reconstructed agent state, mutated as state events arrive. Starts
+  /// empty; `extractNew` treats an empty previous state as "no prior citations".
+  Map<String, dynamic> _state = <String, dynamic>{};
+
+  /// Ordered, de-duplicated sources collected so far. Order is first-seen
+  /// (the order the backend surfaced them), de-duped by `chunkId`.
+  final List<sox.SourceReference> _sources = <sox.SourceReference>[];
+  final Set<String> _seenChunkIds = <String>{};
+
+  /// Sources collected so far, in first-seen order (unmodifiable view).
+  List<sox.SourceReference> get sources => List.unmodifiable(_sources);
+
+  /// Feed one AG-UI event. Returns true if it was a state event we consumed
+  /// (snapshot or delta); the caller still emits its keepalive either way.
+  ///
+  /// Non-state events are ignored here — text deltas are handled by the caller,
+  /// and other events carry no citation state.
+  bool consume(sox.BaseEvent event) {
+    if (event is sox.StateSnapshotEvent) {
+      // A snapshot replaces state wholesale. `snapshot` is typed `State`
+      // (== dynamic upstream); guard the cast so a malformed frame can't throw.
+      final snap = event.snapshot;
+      _applyState(snap is Map<String, dynamic> ? snap : <String, dynamic>{});
+      return true;
+    }
+    if (event is sox.StateDeltaEvent) {
+      // A delta patches the running state (JSON Patch). Reuse the same patch
+      // engine soliplex_client uses so our reconstructed state matches theirs.
+      _applyState(sox.applyJsonPatch(_state, event.delta));
+      return true;
+    }
+    return false;
+  }
+
+  /// Replace the running state with [next], harvesting any newly-introduced
+  /// citations (diffed against the prior state) into [_sources].
+  void _applyState(Map<String, dynamic> next) {
+    final fresh = _extractor.extractNew(_state, next);
+    for (final ref in fresh) {
+      if (_seenChunkIds.add(ref.chunkId)) _sources.add(ref);
+    }
+    _state = next;
+  }
+}
+
+/// Renders collected [sources] as a compact text block to append to an answer
+/// (CITATIONS PROTOTYPE — inline text only, no pi-tui component).
+///
+/// Returns an empty string when there are no sources, so callers can append
+/// unconditionally. Numbers from [1]: if the model already emitted inline
+/// `[n]` markers in the answer, the backend assigns each citation an `index`,
+/// and we honour it when present so the list lines up with those markers;
+/// otherwise we fall back to first-seen ordering. Label prefers the document
+/// title, then the URI's filename (`displayTitle`).
+String formatSources(List<sox.SourceReference> sources) {
+  if (sources.isEmpty) return '';
+  final lines = <String>[];
+  for (var i = 0; i < sources.length; i++) {
+    final s = sources[i];
+    final n = s.index ?? (i + 1);
+    lines.add('[$n] ${s.displayTitle}');
+  }
+  return '\n\nSources:\n${lines.join('\n')}';
+}
+
 /// Lightweight Soliplex API client bound to one server [session]. All requests
 /// go to `session.baseUrl` with `session.headers()` (bearer when available),
 /// over the session's injectable `http.Client`.
@@ -183,6 +267,9 @@ class SoliplexClient {
         messages: messages,
       );
       final buffer = StringBuffer();
+      // CITATIONS PROTOTYPE: collect RAG sources from state events as they
+      // stream, so we can append a "Sources" block to the answer.
+      final citations = CitationAccumulator();
       await for (final outcome
           in agui.runAgent('rooms/$roomId/agui/$threadId/$runId', input)) {
         // runAgent yields DecodeOutcomes; unwrap decoded events and collect
@@ -193,6 +280,10 @@ class SoliplexClient {
             buffer.write(event.delta);
             onChunk?.call(event.delta);
           } else {
+            // Harvest citations from state events. This does NOT change the
+            // keepalive contract below: state events still fall through to the
+            // empty-chunk relay, so the idle timer is reset exactly as before.
+            citations.consume(event);
             // Keepalive: forward an empty chunk for every other AG-UI event
             // (run/activity/tool/thinking). The klangk bridge bounds the gap
             // BETWEEN chunks (KLANGK_BRIDGE_TIMEOUT_SECONDS, default 30s); a
@@ -204,8 +295,11 @@ class SoliplexClient {
           }
         }
       }
-      final text = buffer.toString();
-      return text.isNotEmpty ? text : '(No response from Soliplex)';
+      final answer =
+          buffer.isNotEmpty ? buffer.toString() : '(No response from Soliplex)';
+      // CITATIONS PROTOTYPE: append a compact Sources list when any were seen.
+      // formatSources returns '' when empty, so this is a no-op otherwise.
+      return answer + formatSources(citations.sources);
     } finally {
       agui.close();
     }
