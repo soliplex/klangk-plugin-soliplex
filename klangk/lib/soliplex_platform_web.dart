@@ -17,11 +17,19 @@ String soliplexBackendBase() => baseUrl;
 /// localStorage-backed token store. Reads are synchronous but presented as
 /// Futures so callers share one surface with the native (Keychain) store.
 class SoliplexTokenStore {
-  static const _accessKey = 'soliplex_access_token';
-  static const _refreshKey = 'soliplex_refresh_token';
-  static const _expiresKey = 'soliplex_expires_at';
-  static const _serverKey = 'soliplex_server_url';
-  static const _clientKey = 'soliplex_client_id';
+  /// [namespace] isolates one server's tokens from another's: every key is
+  /// prefixed with it, so multi-server deployments keep independent auth.
+  /// Defaults to 'default' (the server resolved from the klangk backend
+  /// config), matching the single-server history.
+  SoliplexTokenStore({this.namespace = 'default'});
+
+  final String namespace;
+
+  String get _accessKey => 'soliplex_${namespace}_access_token';
+  String get _refreshKey => 'soliplex_${namespace}_refresh_token';
+  String get _expiresKey => 'soliplex_${namespace}_expires_at';
+  String get _serverKey => 'soliplex_${namespace}_server_url';
+  String get _clientKey => 'soliplex_${namespace}_client_id';
 
   web.Storage get _ls => web.window.localStorage;
 
@@ -59,6 +67,21 @@ class SoliplexTokenStore {
     _ls.removeItem(_serverKey);
     _ls.removeItem(_clientKey);
   }
+}
+
+/// Global (non-namespaced) store for the plugin's server registry: the list of
+/// servers the user (Flutter overlay) or agent (pi `soliplex_add_server`) has
+/// added, persisted as a JSON string so they survive reloads. Distinct from the
+/// per-server [SoliplexTokenStore] — this holds the *set* of servers, not auth.
+class SoliplexConfigStore {
+  static const _serversKey = 'soliplex_servers';
+
+  web.Storage get _ls => web.window.localStorage;
+
+  Future<String?> readServersJson() async => _ls.getItem(_serversKey);
+
+  Future<void> writeServersJson(String json) async =>
+      _ls.setItem(_serversKey, json);
 }
 
 /// Popup OIDC login. Must be called from a user gesture to avoid popup

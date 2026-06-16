@@ -123,11 +123,22 @@ export default function (pi: any) {
   pi.registerTool({
     name: "soliplex_list_rooms",
     description:
-      "List the available Soliplex knowledge-base rooms (id, name, description).",
-    parameters: Type.Object({}),
-    async execute() {
+      "List the available Soliplex knowledge-base rooms (id, name, description) " +
+      "for a server. The header also names other configured servers you can " +
+      "target with the `server` argument on query/reply.",
+    parameters: Type.Object({
+      server: Type.Optional(
+        Type.String({
+          description:
+            "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    async execute(_id: string, params: { server?: string }) {
       try {
-        const { text, error } = await streamBridge("soliplex_list_rooms", {});
+        const { text, error } = await streamBridge("soliplex_list_rooms", {
+          server: params.server,
+        });
         return textResult(error ? `Error: ${error}` : text);
       } catch (e: any) {
         return textResult(`soliplex_list_rooms failed: ${e?.message ?? e}`);
@@ -139,31 +150,43 @@ export default function (pi: any) {
     name: "soliplex_query",
     description:
       "Ask a question to a Soliplex room (RAG + LLM). Starts a NEW conversation " +
-      "thread and returns the answer. The result ends with the thread_id — pass " +
-      "that to soliplex_reply to continue the same conversation (multi-turn). " +
-      "Long-running answers stream and will not time out.",
+      "thread and returns the answer. The result ends with the server + thread_id " +
+      "— pass BOTH to soliplex_reply to continue the same conversation " +
+      "(multi-turn). Long-running answers stream and will not time out.",
     parameters: Type.Object({
       room_id: Type.String({
         description: "Room id (from soliplex_list_rooms).",
       }),
       question: Type.String({ description: "The question to ask." }),
+      server: Type.Optional(
+        Type.String({
+          description:
+            "Soliplex server name (from soliplex_list_rooms). Omit for the " +
+            "default server.",
+        }),
+      ),
     }),
     renderCall(args: any) {
       const a = args ?? {};
+      const srv = oneLine(a.server);
       return callLine(
-        `soliplex_query(roomId: ${oneLine(a.room_id) || "?"}, message: ${oneLine(a.question)})`,
+        `soliplex_query(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}, message: ${oneLine(a.question)})`,
       );
     },
     async execute(
       _id: string,
-      params: { room_id: string; question: string },
+      params: { room_id: string; question: string; server?: string },
       _signal: AbortSignal | undefined,
       onUpdate: any,
     ) {
       try {
         const { text, error } = await streamBridge(
           "soliplex_query",
-          { room_id: params.room_id, question: params.question },
+          {
+            room_id: params.room_id,
+            question: params.question,
+            server: params.server,
+          },
           onUpdate,
         );
         return textResult(error ? `Error: ${error}` : text);
@@ -177,25 +200,38 @@ export default function (pi: any) {
     name: "soliplex_reply",
     description:
       "Continue an existing Soliplex conversation thread (multi-turn). Use the " +
-      "thread_id returned by a prior soliplex_query. The room keeps the thread " +
-      "history, so earlier turns stay in context. Long answers stream.",
+      "server + thread_id returned by a prior soliplex_query. The room keeps the " +
+      "thread history, so earlier turns stay in context. Long answers stream.",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the thread." }),
       message: Type.String({ description: "The follow-up message." }),
       thread_id: Type.String({
         description: "thread_id from a prior soliplex_query result.",
       }),
+      server: Type.Optional(
+        Type.String({
+          description:
+            "Soliplex server name from the prior soliplex_query result. Must " +
+            "match — omit only if that query used the default server.",
+        }),
+      ),
     }),
     renderCall(args: any) {
       const a = args ?? {};
+      const srv = oneLine(a.server);
       return callLine(
-        `soliplex_reply(roomId: ${oneLine(a.room_id) || "?"}, ` +
+        `soliplex_reply(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}, ` +
           `message: ${oneLine(a.message)}, threadId: ${oneLine(a.thread_id)})`,
       );
     },
     async execute(
       _id: string,
-      params: { room_id: string; message: string; thread_id: string },
+      params: {
+        room_id: string;
+        message: string;
+        thread_id: string;
+        server?: string;
+      },
       _signal: AbortSignal | undefined,
       onUpdate: any,
     ) {
@@ -206,12 +242,63 @@ export default function (pi: any) {
             room_id: params.room_id,
             message: params.message,
             thread_id: params.thread_id,
+            server: params.server,
           },
           onUpdate,
         );
         return textResult(error ? `Error: ${error}` : text);
       } catch (e: any) {
         return textResult(`soliplex_reply failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "soliplex_list_servers",
+    description:
+      "List the configured Soliplex servers (the names usable as the `server` " +
+      "argument to soliplex_query/reply/list_rooms).",
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const { text, error } = await streamBridge("soliplex_list_servers", {});
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_list_servers failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "soliplex_add_server",
+    description:
+      "Register an additional Soliplex server so it can be queried by name. " +
+      "After adding, the user may need to authenticate to it via the " +
+      "'Connect to Soliplex' overlay (each server has its own login); no-auth " +
+      "servers work immediately. The name is then usable as the `server` arg.",
+    parameters: Type.Object({
+      name: Type.String({
+        description: "Short name for the server (used as the `server` arg).",
+      }),
+      url: Type.String({
+        description: "Base URL of the Soliplex server, e.g. https://rag.example.net",
+      }),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      return callLine(
+        `soliplex_add_server(name: ${oneLine(a.name) || "?"}, url: ${oneLine(a.url) || "?"})`,
+      );
+    },
+    async execute(_id: string, params: { name: string; url: string }) {
+      try {
+        const { text, error } = await streamBridge("soliplex_add_server", {
+          name: params.name,
+          url: params.url,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_add_server failed: ${e?.message ?? e}`);
       }
     },
   });

@@ -1,177 +1,56 @@
 import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:soliplex_client/soliplex_client.dart' as sox;
 
-import 'soliplex_auth_result.dart';
-import 'soliplex_platform.dart';
+import 'soliplex_servers.dart';
 
-/// Shared token store (Keychain on native, localStorage on web).
-final SoliplexTokenStore _store = SoliplexTokenStore();
+/// Asset path for the bundled default-server config (declared in pubspec
+/// `flutter: assets:`). Referenced through the package prefix so it resolves
+/// from the consuming klangk frontend, not just this package.
+const _defaultConfigAsset =
+    'packages/klangk_plugin_soliplex/assets/soliplex_config.json';
 
-/// Cached Soliplex URL fetched from the Klangk backend config.
-String? _soliplexUrl;
-
-/// Cached OIDC token endpoint from discovery.
-String? _tokenEndpoint;
-
-/// Fetch the Soliplex URL from the Klangk backend config endpoint. Uses the
-/// platform backend base (same-origin path on web; KLANGK_BACKEND_URL define
-/// on native) so the request is absolute on every target.
-Future<String> _getSoliplexUrl() async {
-  if (_soliplexUrl != null) return _soliplexUrl!;
-  final resp = await http.get(Uri.parse('${soliplexBackendBase()}/api/config'));
-  if (resp.statusCode == 200) {
-    final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    _soliplexUrl =
-        (data['soliplex_url'] as String? ?? '').replaceAll(RegExp(r'/+$'), '');
-  }
-  _soliplexUrl ??= '';
-  return _soliplexUrl!;
-}
-
-/// Discover the OIDC token endpoint from the server_url.
-Future<String?> _getTokenEndpoint(String serverUrl) async {
-  if (_tokenEndpoint != null) return _tokenEndpoint;
-  final url = serverUrl.replaceAll(RegExp(r'/+$'), '');
-  final resp =
-      await http.get(Uri.parse('$url/.well-known/openid-configuration'));
-  if (resp.statusCode == 200) {
-    final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    _tokenEndpoint = data['token_endpoint'] as String?;
-  }
-  return _tokenEndpoint;
-}
-
-/// Try to refresh the access token using the stored refresh token.
-/// Returns the new access token, or null if refresh failed.
-Future<String?> _tryRefreshToken() async {
-  final refreshToken = await _store.refreshToken;
-  final serverUrl = await _store.serverUrl;
-  final clientId = await _store.clientId;
-  if (refreshToken == null || serverUrl == null || clientId == null) {
+/// Read the bundled `default_url` from the plugin asset. Returns null if the
+/// asset is missing or malformed (registry then falls back to legacy config).
+Future<String?> _loadBundledDefaultUrl() async {
+  try {
+    final raw = await rootBundle.loadString(_defaultConfigAsset);
+    final data = jsonDecode(raw) as Map<String, dynamic>;
+    return data['default_url'] as String?;
+  } catch (_) {
     return null;
   }
-
-  final tokenEndpoint = await _getTokenEndpoint(serverUrl);
-  if (tokenEndpoint == null) return null;
-
-  final resp = await http.post(
-    Uri.parse(tokenEndpoint),
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: {
-      'grant_type': 'refresh_token',
-      'refresh_token': refreshToken,
-      'client_id': clientId,
-    },
-  );
-  if (resp.statusCode != 200) return null;
-
-  final data = jsonDecode(resp.body) as Map<String, dynamic>;
-  final newToken = data['access_token'] as String?;
-  final newRefresh = data['refresh_token'] as String?;
-  final expiresIn = data['expires_in'] as int?;
-  if (newToken == null) return null;
-
-  await _store.writeTokens(
-    accessToken: newToken,
-    refreshToken: newRefresh,
-    expiresAt: expiresIn != null
-        ? DateTime.now().add(Duration(seconds: expiresIn))
-        : null,
-  );
-  return newToken;
 }
 
-/// Clear all stored auth state. Called on 401 responses to force
-/// re-authentication via the overlay button.
-Future<void> clearStoredTokens() async {
-  await _store.clear();
-  _tokenEndpoint = null;
-}
+/// Process-wide registry of Soliplex servers. The plugin defaults to this one;
+/// tests construct their own with an injected loader/`http.Client`.
+final SoliplexServerRegistry soliplexServers =
+    SoliplexServerRegistry(defaultUrlLoader: _loadBundledDefaultUrl);
 
-/// Whether there is a valid (non-expired) access token.
-Future<bool> hasValidToken() async {
-  final stored = await _store.accessToken;
-  final expiresAt = await _store.expiresAt;
-  if (stored == null || stored.isEmpty || expiresAt == null) return false;
-  return expiresAt.isAfter(DateTime.now().add(const Duration(seconds: 30)));
-}
-
-/// Get a valid access token: cached if fresh, else silent refresh, else throw
-/// (caller directs the user to the "Connect to Soliplex" overlay).
-Future<String> _getAccessToken() async {
-  final stored = await _store.accessToken;
-  final expiresAt = await _store.expiresAt;
-  if (stored != null && stored.isNotEmpty && expiresAt != null) {
-    if (expiresAt.isAfter(DateTime.now().add(const Duration(seconds: 30)))) {
-      return stored;
-    }
-  }
-  final refreshed = await _tryRefreshToken();
-  if (refreshed != null) return refreshed;
-  throw Exception('Not authenticated. Click "Connect to Soliplex" to log in.');
-}
-
-/// Fetch available OIDC auth systems from the Soliplex backend.
-/// Returns a map of system ID to system data (title, server_url,
-/// client_id, scope, ...).
-Future<Map<String, dynamic>> getAuthSystems() async {
-  final soliplexUrl = await _getSoliplexUrl();
-  final loginResp = await http.get(Uri.parse('$soliplexUrl/api/login'));
-  if (loginResp.statusCode != 200) {
-    throw Exception('Failed to get auth systems: ${loginResp.statusCode}');
-  }
-  final systems = jsonDecode(loginResp.body) as Map<String, dynamic>;
-  if (systems.isEmpty) {
-    throw Exception('No OIDC auth systems configured on Soliplex');
-  }
-  return systems;
-}
-
-/// Perform an interactive login for [systemId] via the platform flow (popup on
-/// web, system-browser PKCE on native) and persist the resulting tokens.
-Future<SoliplexAuthResult> soliplexLogin(String systemId) async {
-  final soliplexUrl = await _getSoliplexUrl();
-  final systems = await getAuthSystems();
-  return soliplexInteractiveLogin(
-    systemId: systemId,
-    soliplexUrl: soliplexUrl,
-    systems: systems,
-    store: _store,
-  );
-}
-
-/// Lightweight Soliplex client that calls the Soliplex API directly.
+/// Lightweight Soliplex API client bound to one server [session]. All requests
+/// go to `session.baseUrl` with `session.headers()` (bearer when available),
+/// over the session's injectable `http.Client`.
 class SoliplexClient {
-  SoliplexClient();
+  SoliplexClient(this.session);
 
-  Future<Map<String, String>> _getHeaders() async {
-    final headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-    try {
-      final token = await _getAccessToken();
-      headers['Authorization'] = 'Bearer $token';
-    } catch (_) {
-      // Proceed without auth — server will return 401 if required.
-    }
-    return headers;
+  final SoliplexServerSession session;
+
+  http.Client get _http => session.httpClient;
+  String get _baseUrl => session.baseUrl;
+
+  Future<Never> _unauthenticated() async {
+    await session.clearStoredTokens();
+    throw Exception('Not authenticated. Click "Connect to Soliplex" to log in.');
   }
 
-  /// List all rooms the user has access to.
+  /// List all rooms the user has access to on this server.
   Future<List<Map<String, dynamic>>> listRooms() async {
-    final soliplexUrl = await _getSoliplexUrl();
-    final headers = await _getHeaders();
-    final response = await http.get(
-      Uri.parse('$soliplexUrl/api/v1/rooms'),
-      headers: headers,
+    final response = await _http.get(
+      Uri.parse('$_baseUrl/api/v1/rooms'),
+      headers: await session.headers(),
     );
-    if (response.statusCode == 401) {
-      await clearStoredTokens();
-      throw Exception(
-          'Not authenticated. Click "Connect to Soliplex" to log in.');
-    }
+    if (response.statusCode == 401) await _unauthenticated();
     if (response.statusCode != 200) {
       throw Exception(
           'Failed to list rooms: ${response.statusCode} ${response.body}');
@@ -197,19 +76,12 @@ class SoliplexClient {
     String question, {
     void Function(String delta)? onChunk,
   }) async {
-    final soliplexUrl = await _getSoliplexUrl();
-    final headers = await _getHeaders();
-
-    final threadResp = await http.post(
-      Uri.parse('$soliplexUrl/api/v1/rooms/$roomId/agui'),
-      headers: headers,
+    final threadResp = await _http.post(
+      Uri.parse('$_baseUrl/api/v1/rooms/$roomId/agui'),
+      headers: await session.headers(),
       body: jsonEncode({}),
     );
-    if (threadResp.statusCode == 401) {
-      await clearStoredTokens();
-      throw Exception(
-          'Not authenticated. Click "Connect to Soliplex" to log in.');
-    }
+    if (threadResp.statusCode == 401) await _unauthenticated();
     if (threadResp.statusCode != 200) {
       throw Exception('Failed to create thread: '
           '${threadResp.statusCode} ${threadResp.body}');
@@ -223,8 +95,7 @@ class SoliplexClient {
     }
     final runId = runs.keys.first;
 
-    final text = await _streamRun(
-        soliplexUrl, roomId, threadId, runId,
+    final text = await _streamRun(roomId, threadId, runId,
         [sox.UserMessage(id: _messageId(0), content: question)], onChunk);
     return (text: text, threadId: threadId);
   }
@@ -245,20 +116,13 @@ class SoliplexClient {
     String message, {
     void Function(String delta)? onChunk,
   }) async {
-    final soliplexUrl = await _getSoliplexUrl();
-    final headers = await _getHeaders();
-
     // Create a new run on the existing thread: POST .../agui/{threadId}.
-    final runResp = await http.post(
-      Uri.parse('$soliplexUrl/api/v1/rooms/$roomId/agui/$threadId'),
-      headers: headers,
+    final runResp = await _http.post(
+      Uri.parse('$_baseUrl/api/v1/rooms/$roomId/agui/$threadId'),
+      headers: await session.headers(),
       body: jsonEncode({}),
     );
-    if (runResp.statusCode == 401) {
-      await clearStoredTokens();
-      throw Exception(
-          'Not authenticated. Click "Connect to Soliplex" to log in.');
-    }
+    if (runResp.statusCode == 401) await _unauthenticated();
     if (runResp.statusCode != 200) {
       throw Exception('Failed to create run on thread $threadId: '
           '${runResp.statusCode} ${runResp.body}');
@@ -273,8 +137,7 @@ class SoliplexClient {
       ...priorMessages,
       sox.UserMessage(id: _messageId(priorMessages.length), content: message),
     ];
-    return _streamRun(
-        soliplexUrl, roomId, threadId, runId, messages, onChunk);
+    return _streamRun(roomId, threadId, runId, messages, onChunk);
   }
 
   /// Stable-ish unique message id for a run input.
@@ -288,8 +151,8 @@ class SoliplexClient {
   /// Streams via soliplex_client's AgUiStreamClient rather than hand-rolling
   /// the SSE. The transport's AuthenticatedHttpClient injects the bearer;
   /// getToken is synchronous, so pre-fetch (and refresh) once.
+  // coverage:ignore-start
   Future<String> _streamRun(
-    String soliplexUrl,
     String roomId,
     String threadId,
     String runId,
@@ -300,7 +163,7 @@ class SoliplexClient {
     // wrap the client with the authenticator when we actually have a token.
     String token = '';
     try {
-      token = await _getAccessToken();
+      token = await session.getAccessToken();
     } catch (_) {
       // No token — proceed unauthenticated (no-auth server).
     }
@@ -311,7 +174,7 @@ class SoliplexClient {
             ? sox.AuthenticatedHttpClient(inner, () => token)
             : inner,
       ),
-      urlBuilder: sox.UrlBuilder('$soliplexUrl/api/v1'),
+      urlBuilder: sox.UrlBuilder('$_baseUrl/api/v1'),
     );
     try {
       final input = sox.SimpleRunAgentInput(
@@ -347,4 +210,5 @@ class SoliplexClient {
       agui.close();
     }
   }
+  // coverage:ignore-end
 }

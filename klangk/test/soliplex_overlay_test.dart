@@ -1,0 +1,155 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:klangk_plugin_soliplex/plugin.dart';
+import 'package:klangk_plugin_soliplex/soliplex_servers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+http.Response _json(Object body, [int status = 200]) =>
+    http.Response(jsonEncode(body), status,
+        headers: {'content-type': 'application/json'});
+
+http.Response _routes(http.Request req) {
+  if (req.url.path.endsWith('/api/config')) {
+    return _json({'soliplex_url': 'https://api'});
+  }
+  if (req.url.path.endsWith('/api/login')) {
+    return _json({
+      'keycloak': {'title': 'Keycloak SSO'},
+    });
+  }
+  return http.Response('x', 404);
+}
+
+/// Pump the plugin's overlay inside a minimal app. A [Builder] supplies a real
+/// BuildContext to buildOverlay.
+Future<void> pumpOverlay(WidgetTester tester, SoliplexPlugin plugin) =>
+    tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Stack(
+          children: [
+            Builder(builder: (context) => plugin.buildOverlay(context)!),
+          ],
+        ),
+      ),
+    ));
+
+SoliplexPlugin _plugin() => SoliplexPlugin(
+    registry: SoliplexServerRegistry(httpClient: MockClient((r) async => _routes(r))));
+
+const _iconKey = ValueKey('soliplex_overlay_icon');
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('collapsed: renders the single hub icon', (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    expect(find.byKey(_iconKey), findsOneWidget);
+  });
+
+  testWidgets('expand: lists the default server with a Connect action',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Soliplex servers'), findsOneWidget);
+    expect(find.text('default'), findsOneWidget);
+    expect(find.byKey(const ValueKey('soliplex_connect_default')),
+        findsOneWidget);
+  });
+
+  testWidgets('connected default shows Logout instead of Connect',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'soliplex_default_access_token': 'tok',
+      'soliplex_default_expires_at':
+          DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+    });
+    await pumpOverlay(tester, _plugin());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('soliplex_logout_default')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('soliplex_connect_default')), findsNothing);
+  });
+
+  testWidgets('add-server form registers a new server row', (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_toggle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_name')), 'staging');
+    await tester.enterText(find.byKey(const ValueKey('soliplex_add_url')),
+        'https://staging.example');
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('staging'), findsOneWidget);
+    expect(find.byKey(const ValueKey('soliplex_connect_staging')),
+        findsOneWidget);
+  });
+
+  testWidgets('connect flow loads a server\'s auth systems', (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_connect_default')));
+    await tester.pumpAndSettle();
+    expect(find.text('Keycloak SSO'), findsOneWidget);
+    expect(find.byKey(const ValueKey('soliplex_connect_submit')),
+        findsOneWidget);
+  });
+
+  // The examplehost scenario: /api/login returns {} (open server). Connecting
+  // must say "no login required", NOT "Failed to load providers".
+  testWidgets('no-auth server (empty /api/login) shows open, not an error',
+      (tester) async {
+    final plugin = SoliplexPlugin(
+        registry: SoliplexServerRegistry(httpClient: MockClient((r) async {
+      if (r.url.path.endsWith('/api/config')) {
+        return _json({'soliplex_url': 'https://api'});
+      }
+      if (r.url.path.endsWith('/api/login')) return _json({}); // open server
+      return http.Response('x', 404);
+    })));
+    await pumpOverlay(tester, plugin);
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_connect_default')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No login required'), findsOneWidget);
+    expect(find.text('Failed to load providers'), findsNothing);
+  });
+
+  testWidgets('real fetch failure (non-200 /api/login) shows the error',
+      (tester) async {
+    final plugin = SoliplexPlugin(
+        registry: SoliplexServerRegistry(httpClient: MockClient((r) async {
+      if (r.url.path.endsWith('/api/config')) {
+        return _json({'soliplex_url': 'https://api'});
+      }
+      if (r.url.path.endsWith('/api/login')) {
+        return http.Response('nope', 503);
+      }
+      return http.Response('x', 404);
+    })));
+    await pumpOverlay(tester, plugin);
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_connect_default')));
+    await tester.pumpAndSettle();
+    expect(find.text('Failed to load providers'), findsOneWidget);
+  });
+}
