@@ -39,10 +39,31 @@ Server used for queries: **demo.example.com** (no-auth Soliplex).
    rendered by `formatSources`. (A non-retrieving question correctly produced
    no Sources block.)
 
+## Full pi agent loop (LLM autonomously calling the tool)
+
+Closed the one gap by running pi **non-interactively inside the workspace
+container** (`podman exec -u 1000 -e KLANGK_BRIDGE_TOKEN=… -e KLANGK_BRIDGE_URL=…
+pi -p "…" --mode json`), so pi used its real config (provider `llm-proxy`,
+model `bizon/gemma4-26b`, extensions `/opt/klangk/pi-agent/extensions`).
+
+pi (gemma) autonomously emitted a `soliplex_query` tool call
+(`server: examplehost`, `room_id: soliplex`) and the tool result returned:
+```
+Sources:
+[1] index.md
+[2] overview.md
+
+[soliplex server: examplehost, thread_id: 93bd5555-… — continue with soliplex_reply(...)]
+```
+So the complete loop works: LLM decides → tool call → browser-delegate bridge →
+examplehost RAG → answer + citations + multi-server continuation hint.
+
 ## Notes
 - Canvas terminal (libghostty) ignores synthetic keystrokes, so pi could not be
-  driven interactively from Chrome; the bridge-direct method validates the full
-  tool-execution path pi uses (everything except the LLM autonomously choosing
-  to call the tool).
+  driven interactively from Chrome — the container-exec method (above) is how the
+  full agent loop was validated.
+- Note: pi pid 19 (the browser terminal's pi) had no bridge token in its env;
+  the bridge token is per-exec, so the explicit `-e KLANGK_BRIDGE_TOKEN` was
+  required for the extension to activate.
 - Browser-side UI (compact hub-icon overlay, add-server, no-auth "open server"
   state) was validated separately via Chrome screenshots.
