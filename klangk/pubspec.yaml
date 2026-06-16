@@ -16,6 +16,10 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  # Used to set a multipart file part's Content-Type when uploading files
+  # (MediaType). It is already a transitive dep of `http`; declared directly
+  # because soliplex_tools.dart imports it.
+  http_parser: ^4.0.0
   # Web-only token store + popup login (imported solely by *_web.dart, which
   # the native build tree-shakes via the conditional export).
   web: ^1.1.0

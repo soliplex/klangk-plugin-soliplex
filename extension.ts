@@ -147,6 +147,41 @@ export default function (pi: any) {
   });
 
   pi.registerTool({
+    name: "soliplex_list_threads",
+    description:
+      "List the conversation threads in a Soliplex room (thread_id, name, " +
+      "created) so you can resume one with soliplex_reply.",
+    parameters: Type.Object({
+      room_id: Type.String({
+        description: "Room id (from soliplex_list_rooms).",
+      }),
+      server: Type.Optional(
+        Type.String({
+          description: "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const srv = oneLine(a.server);
+      return callLine(
+        `soliplex_list_threads(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"})`,
+      );
+    },
+    async execute(_id: string, params: { room_id: string; server?: string }) {
+      try {
+        const { text, error } = await streamBridge("soliplex_list_threads", {
+          room_id: params.room_id,
+          server: params.server,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_list_threads failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "soliplex_query",
     description:
       "Ask a question to a Soliplex room (RAG + LLM). Starts a NEW conversation " +
@@ -353,6 +388,172 @@ export default function (pi: any) {
         return textResult(error ? `Error: ${error}` : text);
       } catch (e: any) {
         return textResult(`soliplex_add_server failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "soliplex_list_files",
+    description:
+      "List the files uploaded to a Soliplex room, or to a specific thread " +
+      "within it (pass thread_id). Returns the filenames; fetch a file's " +
+      "contents with soliplex_get_file.",
+    parameters: Type.Object({
+      room_id: Type.String({
+        description: "Room id (from soliplex_list_rooms).",
+      }),
+      thread_id: Type.Optional(
+        Type.String({
+          description:
+            "Thread id to scope to a thread's uploads. Omit for room-level files.",
+        }),
+      ),
+      server: Type.Optional(
+        Type.String({
+          description: "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const srv = oneLine(a.server);
+      const tid = oneLine(a.thread_id);
+      return callLine(
+        `soliplex_list_files(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}${tid ? `, threadId: ${tid}` : ""})`,
+      );
+    },
+    async execute(
+      _id: string,
+      params: { room_id: string; thread_id?: string; server?: string },
+    ) {
+      try {
+        const { text, error } = await streamBridge("soliplex_list_files", {
+          room_id: params.room_id,
+          thread_id: params.thread_id,
+          server: params.server,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_list_files failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "soliplex_get_file",
+    description:
+      "Download a file uploaded to a Soliplex room (or thread). Text files are " +
+      "returned inline; binary files are returned base64-encoded with a note " +
+      "and their content type.",
+    parameters: Type.Object({
+      room_id: Type.String({ description: "Room id of the file." }),
+      filename: Type.String({
+        description: "Filename (from soliplex_list_files).",
+      }),
+      thread_id: Type.Optional(
+        Type.String({
+          description: "Thread id if the file is thread-scoped. Omit for room files.",
+        }),
+      ),
+      server: Type.Optional(
+        Type.String({
+          description: "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const srv = oneLine(a.server);
+      const tid = oneLine(a.thread_id);
+      return callLine(
+        `soliplex_get_file(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}, file: ${oneLine(a.filename) || "?"}${tid ? `, threadId: ${tid}` : ""})`,
+      );
+    },
+    async execute(
+      _id: string,
+      params: {
+        room_id: string;
+        filename: string;
+        thread_id?: string;
+        server?: string;
+      },
+    ) {
+      try {
+        const { text, error } = await streamBridge("soliplex_get_file", {
+          room_id: params.room_id,
+          filename: params.filename,
+          thread_id: params.thread_id,
+          server: params.server,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_get_file failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "soliplex_upload_file",
+    description:
+      "Upload a file to a Soliplex room (or thread). Provide EXACTLY ONE of " +
+      "`content` (UTF-8 text) or `content_base64` (base64-encoded binary). " +
+      "Optionally set content_type (e.g. text/markdown, application/pdf).",
+    parameters: Type.Object({
+      room_id: Type.String({ description: "Room id to upload into." }),
+      filename: Type.String({ description: "Name to store the file under." }),
+      content: Type.Optional(
+        Type.String({ description: "File contents as UTF-8 text." }),
+      ),
+      content_base64: Type.Optional(
+        Type.String({ description: "File contents as a base64 string (binary)." }),
+      ),
+      content_type: Type.Optional(
+        Type.String({ description: "MIME type, e.g. text/markdown." }),
+      ),
+      thread_id: Type.Optional(
+        Type.String({
+          description: "Thread id to upload into a thread. Omit for room-level.",
+        }),
+      ),
+      server: Type.Optional(
+        Type.String({
+          description: "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const srv = oneLine(a.server);
+      const tid = oneLine(a.thread_id);
+      return callLine(
+        `soliplex_upload_file(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}, file: ${oneLine(a.filename) || "?"}${tid ? `, threadId: ${tid}` : ""})`,
+      );
+    },
+    async execute(
+      _id: string,
+      params: {
+        room_id: string;
+        filename: string;
+        content?: string;
+        content_base64?: string;
+        content_type?: string;
+        thread_id?: string;
+        server?: string;
+      },
+    ) {
+      try {
+        const { text, error } = await streamBridge("soliplex_upload_file", {
+          room_id: params.room_id,
+          filename: params.filename,
+          content: params.content,
+          content_base64: params.content_base64,
+          content_type: params.content_type,
+          thread_id: params.thread_id,
+          server: params.server,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_upload_file failed: ${e?.message ?? e}`);
       }
     },
   });

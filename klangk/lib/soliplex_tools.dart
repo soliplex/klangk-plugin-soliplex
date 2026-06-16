@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:soliplex_client/soliplex_client.dart' as sox;
 
 import 'soliplex_servers.dart';
@@ -150,6 +151,179 @@ class SoliplexClient {
       return data.cast<Map<String, dynamic>>();
     }
     return [];
+  }
+
+  /// List the conversation threads in [roomId] so the agent can resume one via
+  /// [replyToThread]. Each entry has `thread_id`, `created`, and `metadata`
+  /// ({name, description}). Server shape: `{ "threads": [AGUI_Thread...] }`.
+  Future<List<Map<String, dynamic>>> listThreads(String roomId) async {
+    final response = await _http.get(
+      Uri.parse('$_baseUrl/api/v1/rooms/$roomId/agui'),
+      headers: await session.headers(),
+    );
+    if (response.statusCode == 401) await _unauthenticated();
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to list threads: ${response.statusCode} ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    final threads = data is Map ? data['threads'] : data;
+    if (threads is! List) return [];
+    return threads.cast<Map<String, dynamic>>();
+  }
+
+  /// Build the uploads base URL for a room, or a room's thread when [threadId]
+  /// is given. The soliplex GET routes are:
+  ///   room   = /api/v1/uploads/{room_id}
+  ///   thread = /api/v1/uploads/{room_id}/thread/{thread_id}
+  /// (verified against soliplex views/file_uploads.py). Kept as a pure helper so
+  /// the URL shape is testable without a live server.
+  String uploadsUrl(String roomId, {String? threadId}) =>
+      (threadId == null || threadId.isEmpty)
+          ? '$_baseUrl/api/v1/uploads/$roomId'
+          : '$_baseUrl/api/v1/uploads/$roomId/thread/$threadId';
+
+  /// Build the single-file GET URL. soliplex puts a literal `/file/` segment
+  /// before the filename on BOTH the room and thread download routes:
+  ///   room   = /api/v1/uploads/{room_id}/file/{filename}
+  ///   thread = /api/v1/uploads/{room_id}/thread/{thread_id}/file/{filename}
+  /// (this differs from the list routes, which have no `/file/`). The filename
+  /// is percent-encoded so names with spaces/special chars resolve correctly.
+  String fileUrl(String roomId, String filename, {String? threadId}) {
+    final enc = Uri.encodeComponent(filename);
+    return (threadId == null || threadId.isEmpty)
+        ? '$_baseUrl/api/v1/uploads/$roomId/file/$enc'
+        : '$_baseUrl/api/v1/uploads/$roomId/thread/$threadId/file/$enc';
+  }
+
+  /// Build the multipart upload (POST) URL. NOTE the thread POST route has NO
+  /// `/thread/` segment — it is /api/v1/uploads/{room_id}/{thread_id} — whereas
+  /// the room POST is /api/v1/uploads/{room_id} (verified in file_uploads.py:141
+  /// and :313). This asymmetry with the GET routes is deliberate on the server.
+  String uploadPostUrl(String roomId, {String? threadId}) =>
+      (threadId == null || threadId.isEmpty)
+          ? '$_baseUrl/api/v1/uploads/$roomId'
+          : '$_baseUrl/api/v1/uploads/$roomId/$threadId';
+
+  /// List files uploaded to a [roomId], or to a thread within it when
+  /// [threadId] is given. Normalizes the soliplex `RoomUploads`/`ThreadUploads`
+  /// response (`{room_id, uploads: [{filename, url}]}`) into a flat list of
+  /// `{name, url, ...}` maps. `name` is the canonical key (mirrors the
+  /// room_id-normalization that [listRooms] does) while the original `filename`
+  /// is preserved too, so callers can use either.
+  Future<List<Map<String, dynamic>>> listFiles(String roomId,
+      {String? threadId}) async {
+    final response = await _http.get(
+      Uri.parse(uploadsUrl(roomId, threadId: threadId)),
+      headers: await session.headers(),
+    );
+    if (response.statusCode == 401) await _unauthenticated();
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to list files: ${response.statusCode} ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! Map) return [];
+    final uploads = data['uploads'];
+    if (uploads is! List) return [];
+    return uploads.whereType<Map>().map((u) {
+      final m = u.cast<String, dynamic>();
+      return <String, dynamic>{'name': m['filename'], ...m};
+    }).toList();
+  }
+
+  /// Max bytes of decoded text we return inline before truncating. A large file
+  /// would otherwise blow up the tool result (and the model's context); the
+  /// caller is told when truncation happened so it can fetch a narrower slice.
+  static const int maxTextBytes = 64 * 1024;
+
+  /// Download a single file from a [roomId] (or a thread within it). Returns the
+  /// body as UTF-8 [content] when it decodes cleanly (text), otherwise as a
+  /// base64 string with [base64] = true (binary). [contentType] is the server's
+  /// Content-Type header when present. Text longer than [maxTextBytes] is
+  /// truncated with a trailing note; binary is never truncated here (the caller
+  /// decides) but is reported via the base64 flag.
+  Future<({String content, bool base64, String? contentType})> getFile(
+    String roomId,
+    String filename, {
+    String? threadId,
+  }) async {
+    final response = await _http.get(
+      Uri.parse(fileUrl(roomId, filename, threadId: threadId)),
+      headers: await session.headers(),
+    );
+    if (response.statusCode == 401) await _unauthenticated();
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to get file "$filename": '
+          '${response.statusCode} ${response.body}');
+    }
+    final contentType = response.headers['content-type'];
+    final bytes = response.bodyBytes;
+    // Prefer text: try a strict UTF-8 decode. If it throws, the bytes aren't
+    // valid UTF-8 (binary), so fall back to base64. We decode the bytes
+    // ourselves rather than trust response.body, because http decodes with the
+    // charset from Content-Type (often latin-1) and would mojibake real UTF-8.
+    try {
+      final text = utf8.decode(bytes);
+      if (text.length > maxTextBytes) {
+        return (
+          content: '${text.substring(0, maxTextBytes)}\n'
+              '...[truncated: ${text.length} chars total, '
+              'showing first $maxTextBytes]',
+          base64: false,
+          contentType: contentType,
+        );
+      }
+      return (content: text, base64: false, contentType: contentType);
+    } on FormatException {
+      return (content: base64Encode(bytes), base64: true, contentType: contentType);
+    }
+  }
+
+  /// Upload [bytes] as [filename] to a [roomId] (or a thread within it). Uses a
+  /// multipart POST with the form field name `upload_file` — the EXACT field the
+  /// soliplex endpoint expects (it binds a single `upload_file: fastapi.UploadFile`,
+  /// see file_uploads.py:144 and :317), NOT a `files` list. The server responds
+  /// 204 No Content on success. 401 clears tokens; any other non-2xx throws with
+  /// the status + body.
+  Future<void> uploadFile(
+    String roomId,
+    String filename,
+    List<int> bytes, {
+    String? threadId,
+    String? contentType,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse(uploadPostUrl(roomId, threadId: threadId)),
+    );
+    request.headers.addAll(await session.headers());
+    request.files.add(http.MultipartFile.fromBytes(
+      'upload_file', // soliplex's single UploadFile param name (verified)
+      bytes,
+      filename: filename,
+      contentType: _mediaTypeOrNull(contentType),
+    ));
+    final streamed = await _http.send(request);
+    if (streamed.statusCode == 401) await _unauthenticated();
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(
+          'Failed to upload "$filename": ${streamed.statusCode} $body');
+    }
+  }
+
+  /// Parse a Content-Type string into a [MediaType], or null when absent/blank
+  /// or unparseable — so a bad caller value degrades to "let the client default
+  /// it" rather than throwing mid-upload.
+  static MediaType? _mediaTypeOrNull(String? contentType) {
+    if (contentType == null || contentType.trim().isEmpty) return null;
+    try {
+      return MediaType.parse(contentType);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Query a room by creating a thread, posting a question, and collecting the

@@ -68,6 +68,48 @@ void main() {
     });
   });
 
+  group('soliplex_list_threads', () {
+    test('requires room_id (returns before network)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      expect(await plugin.handlers['soliplex_list_threads']!({}),
+          'Error: room_id is required');
+    });
+
+    test('formats threads with name + created, resume hint', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms/kb/agui')) {
+          return _json({
+            'threads': [
+              {'thread_id': 't1', 'metadata': {'name': 'Design chat'}},
+              {'thread_id': 't2'},
+            ],
+          });
+        }
+        return http.Response('unexpected ${req.url}', 404);
+      }));
+      final out = await plugin.handlers['soliplex_list_threads']!(
+          {'room_id': 'kb'});
+      expect(out, contains('Threads in room "kb" on "default"'));
+      expect(out, contains('- t1: Design chat'));
+      expect(out, contains('- t2: (untitled)'));
+      expect(out, contains('soliplex_reply'));
+    });
+
+    test('empty room reports no threads', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({'threads': []});
+      }));
+      expect(await plugin.handlers['soliplex_list_threads']!({'room_id': 'kb'}),
+          contains('No threads in room "kb"'));
+    });
+  });
+
   group('argument validation (returns before any network)', () {
     test('soliplex_query requires a question', () async {
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
@@ -262,6 +304,165 @@ void main() {
         ]
       });
       expect(out, contains('## ghost/kb\nError:'));
+      expect(out, contains('Unknown soliplex server'));
+    });
+  });
+
+  group('file tools', () {
+    // Routes the file-uploads endpoints (plus config) so the handlers can run
+    // end-to-end through the MockClient (no live server). The path discriminates
+    // list vs get vs upload.
+    http.Response fileRoutes(http.Request req) {
+      final path = req.url.path;
+      if (path.endsWith('/api/config')) {
+        return _json({'soliplex_url': 'https://api'});
+      }
+      // GET file download: .../file/<name>
+      if (req.method == 'GET' && path.contains('/uploads/') &&
+          path.contains('/file/')) {
+        return http.Response('# contents', 200,
+            headers: {'content-type': 'text/markdown'});
+      }
+      // GET listing: .../uploads/<room>[/thread/<id>]
+      if (req.method == 'GET' && path.contains('/uploads/')) {
+        return _json({
+          'room_id': 'kb',
+          'uploads': [
+            {'filename': 'readme.md', 'url': 'https://api/x/readme.md'},
+          ],
+        });
+      }
+      // POST upload
+      if (req.method == 'POST' && path.contains('/uploads/')) {
+        return http.Response('', 204);
+      }
+      return http.Response('unexpected ${req.method} ${req.url}', 404);
+    }
+
+    test('soliplex_list_files requires room_id (before any network)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      expect(await plugin.handlers['soliplex_list_files']!({}),
+          'Error: room_id is required');
+    });
+
+    test('soliplex_list_files lists filenames (room scope)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(fileRoutes));
+      final out =
+          await plugin.handlers['soliplex_list_files']!({'room_id': 'kb'});
+      expect(out, contains('Files in room "kb" on "default"'));
+      expect(out, contains('- readme.md'));
+    });
+
+    test('soliplex_list_files passes thread_id through to the thread scope',
+        () async {
+      String? seenPath;
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        seenPath = req.url.path;
+        return _json({'room_id': 'kb', 'thread_id': 't9', 'uploads': []});
+      }));
+      final out = await plugin.handlers['soliplex_list_files']!(
+          {'room_id': 'kb', 'thread_id': 't9'});
+      expect(seenPath, '/api/v1/uploads/kb/thread/t9');
+      expect(out, contains('thread "t9"'));
+    });
+
+    test('soliplex_get_file requires room_id then filename', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      expect(await plugin.handlers['soliplex_get_file']!({'filename': 'f'}),
+          'Error: room_id is required');
+      expect(await plugin.handlers['soliplex_get_file']!({'room_id': 'kb'}),
+          'Error: filename is required');
+    });
+
+    test('soliplex_get_file returns text inline', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(fileRoutes));
+      final out = await plugin.handlers['soliplex_get_file']!(
+          {'room_id': 'kb', 'filename': 'readme.md'});
+      expect(out, '# contents');
+    });
+
+    test('soliplex_get_file notes binary + base64 + content type', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return http.Response.bytes([0xFF, 0x01], 200,
+            headers: {'content-type': 'application/octet-stream'});
+      }));
+      final out = await plugin.handlers['soliplex_get_file']!(
+          {'room_id': 'kb', 'filename': 'blob.bin'});
+      expect(out, contains('[binary file "blob.bin"'));
+      expect(out, contains('application/octet-stream'));
+      expect(out, contains('base64-encoded'));
+    });
+
+    test('soliplex_upload_file validates required + xor BEFORE network',
+        () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      expect(await plugin.handlers['soliplex_upload_file']!({}),
+          'Error: room_id is required');
+      expect(
+          await plugin.handlers['soliplex_upload_file']!({'room_id': 'kb'}),
+          'Error: filename is required');
+      // Neither content nor content_base64.
+      expect(
+          await plugin.handlers['soliplex_upload_file']!(
+              {'room_id': 'kb', 'filename': 'f'}),
+          'Error: provide exactly one of content or content_base64');
+      // Both supplied -> xor violation.
+      expect(
+          await plugin.handlers['soliplex_upload_file']!({
+            'room_id': 'kb',
+            'filename': 'f',
+            'content': 'a',
+            'content_base64': 'YQ=='
+          }),
+          'Error: provide exactly one of content or content_base64');
+    });
+
+    test('soliplex_upload_file reports bad base64', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      final out = await plugin.handlers['soliplex_upload_file']!(
+          {'room_id': 'kb', 'filename': 'f', 'content_base64': 'not base64!!'});
+      expect(out, contains('not valid base64'));
+    });
+
+    test('soliplex_upload_file uploads text content (room scope)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(fileRoutes));
+      final out = await plugin.handlers['soliplex_upload_file']!(
+          {'room_id': 'kb', 'filename': 'note.txt', 'content': 'hello'});
+      expect(out, contains('Uploaded "note.txt" (5 bytes) to room "kb"'));
+    });
+
+    test('soliplex_upload_file decodes base64 + passes thread_id through',
+        () async {
+      String? seenPath;
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        seenPath = req.url.path;
+        return http.Response('', 204);
+      }));
+      final out = await plugin.handlers['soliplex_upload_file']!({
+        'room_id': 'kb',
+        'filename': 'blob.bin',
+        'content_base64': 'AQID', // [1,2,3]
+        'thread_id': 't5',
+      });
+      // Thread POST path has NO /thread/ segment (verified API quirk).
+      expect(seenPath, '/api/v1/uploads/kb/t5');
+      expect(out, contains('(3 bytes) to thread "t5"'));
+    });
+
+    test('file handlers surface a clear error for an unknown server', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      final out = await plugin.handlers['soliplex_list_files']!(
+          {'room_id': 'kb', 'server': 'ghost'});
+      expect(out, contains('Error listing files'));
       expect(out, contains('Unknown soliplex server'));
     });
   });

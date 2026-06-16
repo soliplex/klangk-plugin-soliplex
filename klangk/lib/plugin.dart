@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:soliplex_agent/soliplex_agent.dart' show ThreadKey;
@@ -166,11 +168,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   @override
   Map<String, ToolHandler> get handlers => {
         'soliplex_list_rooms': _listRooms,
+        'soliplex_list_threads': _listThreads,
         'soliplex_query': _query,
         'soliplex_query_all': _queryAll,
         'soliplex_reply': _reply,
         'soliplex_list_servers': _listServers,
         'soliplex_add_server': _addServer,
+        'soliplex_list_files': _listFiles,
+        'soliplex_get_file': _getFile,
+        'soliplex_upload_file': _uploadFile,
       };
 
   @override
@@ -269,6 +275,35 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     } catch (e) {
       await _refreshAuthState();
       return 'Error listing rooms on "$server": $e';
+    }
+  }
+
+  /// List conversation threads in a room so the agent can resume one via
+  /// soliplex_reply. Pairs with reply: list → pick thread_id → reply.
+  Future<String> _listThreads(Map<String, dynamic> request) async {
+    final server = _serverArg(request);
+    final roomId = request['room_id'] as String? ?? '';
+    if (roomId.isEmpty) return 'Error: room_id is required';
+    try {
+      final session = await registry.session(server);
+      final threads = await SoliplexClient(session).listThreads(roomId);
+      await _refreshAuthState();
+      if (threads.isEmpty) {
+        return 'No threads in room "$roomId" on "$server".';
+      }
+      final lines = threads.map((t) {
+        final id = t['thread_id'] ?? '?';
+        final meta = t['metadata'] as Map<String, dynamic>?;
+        final name = (meta?['name'] as String?)?.trim();
+        final created = t['created'] as String?;
+        final label = (name == null || name.isEmpty) ? '(untitled)' : name;
+        return '- $id: $label${created == null ? '' : ' [$created]'}';
+      }).join('\n');
+      return 'Threads in room "$roomId" on "$server" — resume one with '
+          'soliplex_reply(server, room_id, thread_id, message):\n$lines';
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error listing threads in "$roomId" on "$server": $e';
     }
   }
 
@@ -462,6 +497,113 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     } catch (e) {
       await _refreshAuthState();
       return 'Error replying to Soliplex thread: $e';
+    }
+  }
+
+  /// Normalize a `thread_id` argument: blank/absent -> null (room-scoped). Used
+  /// by every file tool so a passed-through empty string behaves like "no
+  /// thread" rather than building a malformed thread URL.
+  static String? _threadArg(Map<String, dynamic> request) {
+    final raw = (request['thread_id'] as String?)?.trim();
+    return (raw == null || raw.isEmpty) ? null : raw;
+  }
+
+  /// List files uploaded to a room (or a thread within it). The soliplex
+  /// response only carries `filename` + `url` per file (no size/mtime), so we
+  /// list names; the URL is omitted from the text since it is an internal,
+  /// auth-gated download link the agent should reach via soliplex_get_file.
+  Future<String> _listFiles(Map<String, dynamic> request) async {
+    final server = _serverArg(request);
+    final roomId = (request['room_id'] as String?)?.trim() ?? '';
+    if (roomId.isEmpty) return 'Error: room_id is required';
+    final threadId = _threadArg(request);
+    final scope = threadId == null ? 'room "$roomId"' : 'thread "$threadId"';
+    try {
+      final session = await registry.session(server);
+      final files =
+          await SoliplexClient(session).listFiles(roomId, threadId: threadId);
+      await _refreshAuthState();
+      if (files.isEmpty) return 'No files in $scope on "$server".';
+      final lines = files
+          .map((f) => '- ${f['name'] ?? f['filename'] ?? '(unnamed)'}')
+          .join('\n');
+      return 'Files in $scope on "$server":\n$lines';
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error listing files in $scope on "$server": $e';
+    }
+  }
+
+  /// Download a file's contents. Text is returned inline; binary is returned
+  /// base64-encoded with a clear note + content type so the agent knows it is
+  /// not literal text (and can decode it if it needs the raw bytes).
+  Future<String> _getFile(Map<String, dynamic> request) async {
+    final server = _serverArg(request);
+    final roomId = (request['room_id'] as String?)?.trim() ?? '';
+    final filename = (request['filename'] as String?)?.trim() ?? '';
+    if (roomId.isEmpty) return 'Error: room_id is required';
+    if (filename.isEmpty) return 'Error: filename is required';
+    final threadId = _threadArg(request);
+    try {
+      final session = await registry.session(server);
+      final file = await SoliplexClient(session)
+          .getFile(roomId, filename, threadId: threadId);
+      await _refreshAuthState();
+      if (file.base64) {
+        return '[binary file "$filename"'
+            '${file.contentType == null ? '' : ', ${file.contentType}'}'
+            ' — base64-encoded below]\n${file.content}';
+      }
+      return file.content;
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error getting file "$filename" on "$server": $e';
+    }
+  }
+
+  /// Upload a file to a room (or thread). Exactly one of `content` (UTF-8 text)
+  /// or `content_base64` (binary) must be supplied; we decode to bytes and POST.
+  /// The xor + required-field checks happen BEFORE any network call so a bad
+  /// invocation fails fast and cheaply.
+  Future<String> _uploadFile(Map<String, dynamic> request) async {
+    final server = _serverArg(request);
+    final roomId = (request['room_id'] as String?)?.trim() ?? '';
+    final filename = (request['filename'] as String?)?.trim() ?? '';
+    final content = request['content'] as String?;
+    final contentB64 = request['content_base64'] as String?;
+    final contentType = (request['content_type'] as String?)?.trim();
+    if (roomId.isEmpty) return 'Error: room_id is required';
+    if (filename.isEmpty) return 'Error: filename is required';
+    // Exactly one body source. Treat null as "absent"; an empty string still
+    // counts as supplied (an empty file is legitimate) so we check for null.
+    final hasText = content != null;
+    final hasB64 = contentB64 != null;
+    if (hasText == hasB64) {
+      return 'Error: provide exactly one of content or content_base64';
+    }
+    final List<int> bytes;
+    try {
+      // The xor check above guarantees the chosen branch's value is non-null.
+      // `content` promotes via `hasText`; `contentB64` needs the assertion since
+      // the analyzer doesn't track the `hasB64` boolean back to nullability.
+      bytes = hasText ? utf8.encode(content) : base64Decode(contentB64!);
+    } on FormatException catch (e) {
+      return 'Error: content_base64 is not valid base64: $e';
+    }
+    final threadId = _threadArg(request);
+    final scope = threadId == null ? 'room "$roomId"' : 'thread "$threadId"';
+    try {
+      final session = await registry.session(server);
+      await SoliplexClient(session).uploadFile(roomId, filename, bytes,
+          threadId: threadId,
+          contentType: (contentType == null || contentType.isEmpty)
+              ? null
+              : contentType);
+      await _refreshAuthState();
+      return 'Uploaded "$filename" (${bytes.length} bytes) to $scope on "$server".';
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error uploading "$filename" to $scope on "$server": $e';
     }
   }
 }
