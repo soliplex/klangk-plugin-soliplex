@@ -8,6 +8,54 @@ import 'soliplex_tools.dart';
 
 const soliplexPluginVersion = '2026-06-04-native';
 
+/// One resolved fan-out target: a concrete (server, room) pair after defaults
+/// are filled in and any `room:"*"` wildcard has been expanded to real rooms.
+/// Plain value type so the expand/dispatch/format steps stay unit-testable.
+class FanOutTarget {
+  const FanOutTarget(this.server, this.room);
+  final String server;
+  final String room;
+}
+
+/// Outcome of querying one [FanOutTarget]: either the answer (with its Sources
+/// block + thread id, for continuation) or a captured per-target error message.
+/// A failed target carries [error] != null and never aborts the batch.
+class FanOutResult {
+  const FanOutResult({
+    required this.server,
+    required this.room,
+    this.answer,
+    this.threadId,
+    this.error,
+  });
+  final String server;
+  final String room;
+  final String? answer;
+  final String? threadId;
+  final String? error;
+}
+
+/// Render fan-out [results] as one aggregated, per-target-labeled block. PURE
+/// (no I/O) so the aggregation shape is unit-testable independently of the live
+/// SSE in `_streamRun`. Each successful target keeps its own answer (which
+/// already carries its "Sources" list) and prints its `thread_id` so the agent
+/// can continue THAT conversation via soliplex_reply(server, room, thread_id).
+/// Failed targets render `Error: <message>` instead, so a partial failure is
+/// visible inline rather than collapsing the whole result.
+String formatFanOut(String question, List<FanOutResult> results) {
+  final blocks = results.map((r) {
+    final header = '## ${r.server}/${r.room}';
+    if (r.error != null) return '$header\nError: ${r.error}';
+    final tid = r.threadId == null
+        ? ''
+        : '\n[soliplex server: ${r.server}, room_id: ${r.room}, '
+            'thread_id: ${r.threadId} — continue with '
+            'soliplex_reply(server, room_id, thread_id, message)]';
+    return '$header\n${r.answer ?? ''}$tid';
+  }).join('\n\n');
+  return 'Asked ${results.length} target(s): "$question"\n\n$blocks';
+}
+
 /// Knowledge-base plugin: bridges the agent's `soliplex_list_rooms` /
 /// `soliplex_query` tools to the user's Soliplex server, with an auth overlay.
 ///
@@ -119,6 +167,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   Map<String, ToolHandler> get handlers => {
         'soliplex_list_rooms': _listRooms,
         'soliplex_query': _query,
+        'soliplex_query_all': _queryAll,
         'soliplex_reply': _reply,
         'soliplex_list_servers': _listServers,
         'soliplex_add_server': _addServer,
@@ -127,6 +176,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   @override
   Map<String, StreamingToolHandler> get streamingHandlers => {
         'soliplex_query': _queryStream,
+        'soliplex_query_all': _queryAllStream,
         'soliplex_reply': _replyStream,
       };
 
@@ -256,6 +306,126 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
       await _refreshAuthState();
       return 'Error querying Soliplex: $e';
     }
+  }
+
+  Future<String> _queryAll(Map<String, dynamic> request) =>
+      _runQueryAll(request, null);
+
+  Future<String> _queryAllStream(
+          Map<String, dynamic> request, ToolChunkSink emit) =>
+      _runQueryAll(request, emit);
+
+  /// Resolve the raw `targets` argument into concrete [FanOutTarget]s: fill in
+  /// the default server when omitted/blank, and expand `room:"*"` to one target
+  /// per room on that server (via [SoliplexClient.listRooms]). Kept separate
+  /// from dispatch/format so this expansion (incl. the `*` + listRooms path) is
+  /// unit-testable through the MockClient — it hits `/api/v1/rooms`, which the
+  /// existing mock already routes, and returns BEFORE any live-SSE `_streamRun`.
+  ///
+  /// Throws [ArgumentError] on a malformed entry (missing room) so the caller
+  /// can surface a validation error before any network fan-out.
+  Future<List<FanOutTarget>> _resolveTargets(List<dynamic> targets) async {
+    final resolved = <FanOutTarget>[];
+    for (final raw in targets) {
+      if (raw is! Map) {
+        throw ArgumentError('each target must be an object {server?, room}');
+      }
+      final server = ((raw['server'] as String?)?.trim().isNotEmpty ?? false)
+          ? (raw['server'] as String).trim()
+          : SoliplexServerRegistry.defaultName;
+      final room = (raw['room'] as String?)?.trim() ?? '';
+      if (room.isEmpty) {
+        throw ArgumentError('each target requires a "room"');
+      }
+      if (room == '*') {
+        // Wildcard: expand to every room on this server. A bad server name or
+        // listRooms failure throws here and is caught per-call by the dispatch
+        // layer's outer try in _runQueryAll, becoming a batch-level error.
+        final session = await registry.session(server);
+        final rooms = await SoliplexClient(session).listRooms();
+        for (final r in rooms) {
+          final id = (r['room_id'] ?? r['id'])?.toString();
+          if (id != null && id.isNotEmpty) {
+            resolved.add(FanOutTarget(server, id));
+          }
+        }
+      } else {
+        resolved.add(FanOutTarget(server, room));
+      }
+    }
+    return resolved;
+  }
+
+  /// Run ONE question against MANY (server, room) targets in parallel and
+  /// aggregate into a single labeled block. Mirrors [_runQuery] but fans out:
+  ///
+  ///  - validates a non-empty question and >=1 target,
+  ///  - expands targets (default server fill-in + `room:"*"`) via
+  ///    [_resolveTargets],
+  ///  - dispatches all targets concurrently with [Future.wait]; each target is
+  ///    wrapped so a thrown error (server down, 401, unknown server, no run)
+  ///    becomes a [FanOutResult] error entry rather than failing the batch
+  ///    (PARTIAL-FAILURE TOLERANT),
+  ///  - seeds per-target thread history so a later soliplex_reply has context,
+  ///  - formats with the pure [formatFanOut].
+  ///
+  /// Keepalive contract: we do NOT interleave the concurrent token streams
+  /// (unreadable). Each target collects its own full answer; we emit a
+  /// per-target progress line through [onChunk] when a target finishes, so the
+  /// bridge idle timer keeps resetting across a long fan-out without garbling
+  /// the output. Per-target token streams from queryRoom's onChunk are dropped
+  /// for the same reason.
+  Future<String> _runQueryAll(
+      Map<String, dynamic> request, ToolChunkSink? onChunk) async {
+    final question = (request['question'] as String?)?.trim() ?? '';
+    if (question.isEmpty) return 'Error: question is required';
+    final rawTargets = request['targets'];
+    if (rawTargets is! List || rawTargets.isEmpty) {
+      return 'Error: at least one target {server?, room} is required';
+    }
+
+    final List<FanOutTarget> targets;
+    try {
+      targets = await _resolveTargets(rawTargets);
+    } on ArgumentError catch (e) {
+      return 'Error: ${e.message}';
+    } catch (e) {
+      // A `*` expansion can fail (unknown server / listRooms error). Surface it
+      // as a validation-style error rather than a half-built fan-out.
+      return 'Error expanding targets: $e';
+    }
+    if (targets.isEmpty) {
+      return 'Error: no rooms resolved from the given targets';
+    }
+
+    onChunk?.call(''); // initial keepalive before the (possibly long) fan-out
+
+    // Fan out in parallel; capture each target's outcome independently so one
+    // failure never sinks the batch.
+    final results = await Future.wait(targets.map((t) async {
+      try {
+        final session = await registry.session(t.server);
+        // Drop per-target token deltas (concurrent interleave is unreadable);
+        // the answer is collected whole below.
+        final r = await SoliplexClient(session).queryRoom(t.room, question);
+        // Seed history so soliplex_reply on this exact (server, room, thread)
+        // has prior context — same contract as _runQuery.
+        final key = (serverId: t.server, roomId: t.room, threadId: r.threadId);
+        _threadHistory[key] = [
+          sox.UserMessage(id: _mid('u'), content: question),
+          sox.AssistantMessage(id: _mid('a'), content: r.text),
+        ];
+        onChunk?.call(''); // keepalive: this target finished
+        return FanOutResult(
+            server: t.server, room: t.room, answer: r.text, threadId: r.threadId);
+      } catch (e) {
+        onChunk?.call(''); // keepalive even on failure
+        return FanOutResult(server: t.server, room: t.room, error: '$e');
+      }
+    }));
+
+    await _refreshAuthState();
+    return formatFanOut(question, results);
   }
 
   Future<String> _reply(Map<String, dynamic> request) =>

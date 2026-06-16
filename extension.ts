@@ -197,6 +197,60 @@ export default function (pi: any) {
   });
 
   pi.registerTool({
+    name: "soliplex_query_all",
+    description:
+      "Ask ONE question of MANY Soliplex rooms across servers in parallel and " +
+      "get a single aggregated answer, labeled per target. Each target is " +
+      "{server?, room}; omit server for the default. Use room: \"*\" to fan out " +
+      "to every room on that server. The result has a `## server/room` section " +
+      "per target with that room's answer (and its Sources) plus a thread_id you " +
+      "can pass to soliplex_reply to continue a specific one. A target that " +
+      "fails (server down, auth, unknown) shows an Error line but the others " +
+      "still return. Long-running fan-outs stream and will not time out.",
+    parameters: Type.Object({
+      question: Type.String({ description: "The question to ask every target." }),
+      targets: Type.Array(
+        Type.Object({
+          server: Type.Optional(
+            Type.String({
+              description:
+                "Soliplex server name. Omit for the default server.",
+            }),
+          ),
+          room: Type.String({
+            description: 'Room id (from soliplex_list_rooms), or "*" for all rooms.',
+          }),
+        }),
+        { description: "The (server, room) targets to ask in parallel." },
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const n = Array.isArray(a.targets) ? a.targets.length : 0;
+      return callLine(
+        `soliplex_query_all(targets: ${n}, question: ${oneLine(a.question)})`,
+      );
+    },
+    async execute(
+      _id: string,
+      params: { question: string; targets: Array<{ server?: string; room: string }> },
+      _signal: AbortSignal | undefined,
+      onUpdate: any,
+    ) {
+      try {
+        const { text, error } = await streamBridge(
+          "soliplex_query_all",
+          { question: params.question, targets: params.targets },
+          onUpdate,
+        );
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_query_all failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "soliplex_reply",
     description:
       "Continue an existing Soliplex conversation thread (multi-turn). Use the " +
