@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { execSync } from "child_process";
 
 // Pi extension: exposes Soliplex room tools to the agent. Each tool delegates
 // to the user's browser session (where the Flutter soliplex plugin holds the
@@ -10,7 +11,20 @@ import { Type } from "@sinclair/typebox";
 // round-trip timeout no longer applies — only the per-chunk idle timeout does.
 
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const BRIDGE_TOKEN = process.env.KLANGK_BRIDGE_TOKEN;
+
+/**
+ * Read the current browser ID from klangk-browser-id.
+ *
+ * Call this per-request, not once at module load — the ID changes
+ * when the user refreshes the browser or switches tabs.
+ */
+function getBrowserId(): string {
+  try {
+    return execSync("klangk-browser-id", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 interface BridgeResult {
   text: string;
@@ -29,7 +43,7 @@ async function streamBridge(
   const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, token: BRIDGE_TOKEN, ...params }),
+    body: JSON.stringify({ action, browser_id: getBrowserId(), ...params }),
   });
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
@@ -118,7 +132,7 @@ function callLine(text: string): { render: (w: number) => string[]; invalidate: 
 }
 
 export default function (pi: any) {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
+  if (!BRIDGE_URL) return;
 
   pi.registerTool({
     name: "soliplex_list_rooms",
