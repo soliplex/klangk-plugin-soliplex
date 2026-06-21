@@ -26,6 +26,14 @@ function getBrowserId(): string {
   }
 }
 
+function getWorkspaceToken(): string {
+  try {
+    return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 interface BridgeResult {
   text: string;
   error?: string;
@@ -40,9 +48,13 @@ async function streamBridge(
   params: Record<string, unknown>,
   onUpdate?: (update: unknown) => void,
 ): Promise<BridgeResult> {
+  const token = getWorkspaceToken();
   const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ action, browser_id: getBrowserId(), ...params }),
   });
   if (!resp.ok) {
