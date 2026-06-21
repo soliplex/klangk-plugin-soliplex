@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 // to the user's browser session (where the Flutter soliplex plugin holds the
 // auth + talks to the Soliplex server) via the klangk browser-delegate bridge.
 //
-// We use the *streaming* bridge endpoint (/api/browser-delegate/stream): the
+// We use the *streaming* bridge endpoint (/api/v1/browser-delegate/stream): the
 // browser pushes incremental chunks which we read as they arrive. That keeps
 // the connection alive for long RAG + LLM answers, so the old fixed 30s
 // round-trip timeout no longer applies — only the per-chunk idle timeout does.
@@ -49,7 +49,7 @@ async function streamBridge(
   onUpdate?: (update: unknown) => void,
 ): Promise<BridgeResult> {
   const token = getWorkspaceToken();
-  const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate/stream`, {
+  const resp = await fetch(`${BRIDGE_URL}/api/v1/browser-delegate/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
