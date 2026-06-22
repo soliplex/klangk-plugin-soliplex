@@ -19,7 +19,7 @@ String? _tokenEndpoint;
 /// on native) so the request is absolute on every target.
 Future<String> _getSoliplexUrl() async {
   if (_soliplexUrl != null) return _soliplexUrl!;
-  final resp = await http.get(Uri.parse('${soliplexBackendBase()}/api/config'));
+  final resp = await http.get(Uri.parse('${soliplexBackendBase()}/api/v1/config'));
   if (resp.statusCode == 200) {
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     _soliplexUrl =
