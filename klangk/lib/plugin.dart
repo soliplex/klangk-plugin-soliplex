@@ -209,8 +209,8 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         if (_authSystems!.isNotEmpty) {
           _selectedSystem = _authSystems!.keys.first;
         }
-      } catch (_) {
-        // Leave _authSystems null; user can retry.
+      } catch (e, st) {
+        debugPrint('[Soliplex] Failed to load auth systems: $e\n$st');
       } finally {
         _loadingSystems = false;
       }

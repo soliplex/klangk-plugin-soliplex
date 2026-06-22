@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:soliplex_client/soliplex_client.dart' as sox;
 
@@ -19,11 +20,15 @@ String? _tokenEndpoint;
 /// on native) so the request is absolute on every target.
 Future<String> _getSoliplexUrl() async {
   if (_soliplexUrl != null) return _soliplexUrl!;
-  final resp = await http.get(Uri.parse('${soliplexBackendBase()}/api/v1/config'));
+  final configUrl = '${soliplexBackendBase()}/api/v1/config';
+  debugPrint('[Soliplex] Fetching config from $configUrl');
+  final resp = await http.get(Uri.parse(configUrl));
+  debugPrint('[Soliplex] Config response: ${resp.statusCode} ${resp.body}');
   if (resp.statusCode == 200) {
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     _soliplexUrl =
         (data['soliplex_url'] as String? ?? '').replaceAll(RegExp(r'/+$'), '');
+    debugPrint('[Soliplex] Resolved soliplex_url: $_soliplexUrl');
   }
   _soliplexUrl ??= '';
   return _soliplexUrl!;
@@ -117,7 +122,10 @@ Future<String> _getAccessToken() async {
 /// client_id, scope, ...).
 Future<Map<String, dynamic>> getAuthSystems() async {
   final soliplexUrl = await _getSoliplexUrl();
-  final loginResp = await http.get(Uri.parse('$soliplexUrl/api/login'));
+  final loginUrl = '$soliplexUrl/api/login';
+  debugPrint('[Soliplex] Fetching auth systems from $loginUrl');
+  final loginResp = await http.get(Uri.parse(loginUrl));
+  debugPrint('[Soliplex] Auth systems response: ${loginResp.statusCode} ${loginResp.body}');
   if (loginResp.statusCode != 200) {
     throw Exception('Failed to get auth systems: ${loginResp.statusCode}');
   }
