@@ -419,6 +419,35 @@ export default function (pi: any) {
   });
 
   pi.registerTool({
+    name: "soliplex_remove_server",
+    description:
+      "Remove a previously added Soliplex server by name. The bundled " +
+      "'default' server cannot be removed. Use soliplex_list_servers to see " +
+      "the configured names.",
+    parameters: Type.Object({
+      name: Type.String({
+        description: "Name of the server to remove (from soliplex_list_servers).",
+      }),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      return callLine(
+        `soliplex_remove_server(name: ${oneLine(a.name) || "?"})`,
+      );
+    },
+    async execute(_id: string, params: { name: string }) {
+      try {
+        const { text, error } = await streamBridge("soliplex_remove_server", {
+          name: params.name,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_remove_server failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "soliplex_list_files",
     description:
       "List the files uploaded to a Soliplex room, or to a specific thread " +

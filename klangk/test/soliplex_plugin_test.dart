@@ -151,6 +151,35 @@ void main() {
       expect(listed, contains('- staging: https://staging.example'));
       expect(listed, contains('- default:'));
     });
+
+    test('soliplex_remove_server drops a server; validates + protects default',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+
+      expect(await plugin.handlers['soliplex_remove_server']!({}),
+          'Error: name is required');
+      expect(
+          await plugin.handlers['soliplex_remove_server']!({'name': 'default'}),
+          contains('reserved'));
+      expect(
+          await plugin.handlers['soliplex_remove_server']!({'name': 'nope'}),
+          contains('no soliplex server named "nope"'));
+
+      await plugin.handlers['soliplex_add_server']!(
+          {'name': 'staging', 'url': 'https://staging.example/'});
+      expect(
+          await plugin.handlers['soliplex_list_servers']!({}),
+          contains('- staging:'));
+
+      final removed = await plugin.handlers['soliplex_remove_server']!(
+          {'name': 'staging'});
+      expect(removed, contains('Removed soliplex server "staging"'));
+
+      final listed = await plugin.handlers['soliplex_list_servers']!({});
+      expect(listed, isNot(contains('- staging:')));
+      expect(listed, contains('- default:'));
+    });
   });
 
   group('streaming handlers are registered for query and reply', () {

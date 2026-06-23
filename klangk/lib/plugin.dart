@@ -174,6 +174,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
         'soliplex_reply': _reply,
         'soliplex_list_servers': _listServers,
         'soliplex_add_server': _addServer,
+        'soliplex_remove_server': _removeServer,
         'soliplex_list_files': _listFiles,
         'soliplex_get_file': _getFile,
         'soliplex_upload_file': _uploadFile,
@@ -255,6 +256,29 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
           'server: "$name" to soliplex_query / soliplex_list_rooms / soliplex_reply.';
     } catch (e) {
       return 'Error adding soliplex server "$name": $e';
+    }
+  }
+
+  /// Remove a user/agent-added server (pi `soliplex_remove_server` tool). The
+  /// bundled `default` server is protected and cannot be removed.
+  Future<String> _removeServer(Map<String, dynamic> request) async {
+    final name = (request['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) return 'Error: name is required';
+    if (name == SoliplexServerRegistry.defaultName) {
+      return 'Error: "${SoliplexServerRegistry.defaultName}" is reserved and '
+          'cannot be removed';
+    }
+    try {
+      await registry.ensureDefault();
+      if (!registry.names.contains(name)) {
+        return 'Error: no soliplex server named "$name"; '
+            'use soliplex_list_servers to see configured names';
+      }
+      await registry.removeServer(name);
+      notifyListeners(); // overlay drops the server from its selector
+      return 'Removed soliplex server "$name".';
+    } catch (e) {
+      return 'Error removing soliplex server "$name": $e';
     }
   }
 
