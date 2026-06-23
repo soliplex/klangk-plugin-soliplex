@@ -20,7 +20,7 @@ void main() {
         () async {
       final reg = SoliplexServerRegistry(
         httpClient: MockClient((req) async {
-          expect(req.url.path, endsWith('/api/config'));
+          expect(req.url.path, endsWith('/api/v1/config'));
           return _json({'soliplex_url': 'https://rag.example.net///'});
         }),
       );
@@ -108,7 +108,7 @@ void main() {
   });
 
   group('default source + persistence', () {
-    test('bundled loader supplies the default; /api/config is not called',
+    test('bundled loader supplies the default; /api/v1/config is not called',
         () async {
       final reg = SoliplexServerRegistry(
         defaultUrlLoader: () async => 'https://asset.example.net/',
@@ -118,7 +118,7 @@ void main() {
       expect((await reg.resolve('default')).baseUrl, 'https://asset.example.net');
     });
 
-    test('falls back to /api/config when the loader yields nothing', () async {
+    test('falls back to /api/v1/config when the loader yields nothing', () async {
       final reg = SoliplexServerRegistry(
         defaultUrlLoader: () async => null,
         httpClient:
@@ -127,7 +127,7 @@ void main() {
       expect((await reg.resolve('default')).baseUrl, 'https://legacy');
     });
 
-    test('loader throwing falls back to /api/config', () async {
+    test('loader throwing falls back to /api/v1/config', () async {
       final reg = SoliplexServerRegistry(
         defaultUrlLoader: () async => throw Exception('no asset'),
         httpClient:

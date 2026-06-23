@@ -21,7 +21,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   http.Response defaultRoutes(http.Request req) {
-    if (req.url.path.endsWith('/api/config')) {
+    if (req.url.path.endsWith('/api/v1/config')) {
       return _json({'soliplex_url': 'https://api'});
     }
     if (req.url.path.endsWith('/api/v1/rooms')) {
@@ -50,7 +50,7 @@ void main() {
 
     test('empty room set reports none', () async {
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         return _json({}); // no rooms
@@ -77,7 +77,7 @@ void main() {
 
     test('formats threads with name + created, resume hint', () async {
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         if (req.url.path.endsWith('/api/v1/rooms/kb/agui')) {
@@ -100,7 +100,7 @@ void main() {
 
     test('empty room reports no threads', () async {
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         return _json({'threads': []});
@@ -210,7 +210,7 @@ void main() {
       // POST returns no runs so the (resolved) target fails fast — but the
       // failure header proves the wildcard resolved "search" on "default".
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         if (req.url.path.endsWith('/api/v1/rooms')) {
@@ -235,7 +235,7 @@ void main() {
 
     test('omitted server fills in the default server name', () async {
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
@@ -269,7 +269,7 @@ void main() {
       // POST returns no-runs -> a distinct error entry. Both are captured; the
       // batch does not throw, and each target gets its own labeled section.
       final reg = registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         // host distinguishes the two servers (default=api, good=good)
@@ -314,7 +314,7 @@ void main() {
     // list vs get vs upload.
     http.Response fileRoutes(http.Request req) {
       final path = req.url.path;
-      if (path.endsWith('/api/config')) {
+      if (path.endsWith('/api/v1/config')) {
         return _json({'soliplex_url': 'https://api'});
       }
       // GET file download: .../file/<name>
@@ -357,7 +357,7 @@ void main() {
         () async {
       String? seenPath;
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         seenPath = req.url.path;
@@ -386,7 +386,7 @@ void main() {
 
     test('soliplex_get_file notes binary + base64 + content type', () async {
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         return http.Response.bytes([0xFF, 0x01], 200,
@@ -441,7 +441,7 @@ void main() {
         () async {
       String? seenPath;
       final plugin = SoliplexPlugin(registry: registryWith((req) {
-        if (req.url.path.endsWith('/api/config')) {
+        if (req.url.path.endsWith('/api/v1/config')) {
           return _json({'soliplex_url': 'https://api'});
         }
         seenPath = req.url.path;

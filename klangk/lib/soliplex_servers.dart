@@ -173,7 +173,7 @@ class SoliplexServerSession {
 /// the agent uses in the `server` tool argument.
 ///
 /// The `default` server's URL is resolved once from the klangk backend config
-/// (`/api/config` → `soliplex_url`); additional named servers are added with
+/// (`/api/v1/config` → `soliplex_url`); additional named servers are added with
 /// [addServer] entirely plugin-side, so klangk never needs to know about more
 /// than one Soliplex URL. The injectable [httpClient] lets tests drive the
 /// config fetch (and the sessions it vends) with a `MockClient`.
@@ -206,15 +206,15 @@ class SoliplexServerRegistry {
   /// Name of the bundled default server.
   static const defaultName = 'default';
 
-  /// Register `default` (from the bundled asset, with a legacy `/api/config`
+  /// Register `default` (from the bundled asset, with a legacy `/api/v1/config`
   /// fallback) and load any persisted user/agent-added servers. Idempotent and
   /// concurrency-safe. A missing/empty default still registers `default` (empty
   /// URL) so callers get a clear failure downstream rather than a hang.
   Future<void> ensureDefault() => _initFuture ??= _init();
 
   Future<void> _init() async {
-    // Default URL: bundled asset first; fall back to the legacy klangk
-    // /api/config `soliplex_url` only while klangk still ships it (transition).
+    // Default URL: bundled asset first; fall back to the klangk
+    // /api/v1/config `soliplex_url` only while klangk still ships it (transition).
     var url = '';
     try {
       url = (await _defaultUrlLoader?.call() ?? '')
@@ -225,7 +225,7 @@ class SoliplexServerRegistry {
     if (url.isEmpty) {
       try {
         final resp =
-            await _http.get(Uri.parse('${soliplexBackendBase()}/api/config'));
+            await _http.get(Uri.parse('${soliplexBackendBase()}/api/v1/config'));
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body) as Map<String, dynamic>;
           url = (data['soliplex_url'] as String? ?? '')

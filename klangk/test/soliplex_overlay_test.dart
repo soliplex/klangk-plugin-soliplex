@@ -13,7 +13,7 @@ http.Response _json(Object body, [int status = 200]) =>
         headers: {'content-type': 'application/json'});
 
 http.Response _routes(http.Request req) {
-  if (req.url.path.endsWith('/api/config')) {
+  if (req.url.path.endsWith('/api/v1/config')) {
     return _json({'soliplex_url': 'https://api'});
   }
   if (req.url.path.endsWith('/api/login')) {
@@ -116,7 +116,7 @@ void main() {
       (tester) async {
     final plugin = SoliplexPlugin(
         registry: SoliplexServerRegistry(httpClient: MockClient((r) async {
-      if (r.url.path.endsWith('/api/config')) {
+      if (r.url.path.endsWith('/api/v1/config')) {
         return _json({'soliplex_url': 'https://api'});
       }
       if (r.url.path.endsWith('/api/login')) return _json({}); // open server
@@ -136,7 +136,7 @@ void main() {
       (tester) async {
     final plugin = SoliplexPlugin(
         registry: SoliplexServerRegistry(httpClient: MockClient((r) async {
-      if (r.url.path.endsWith('/api/config')) {
+      if (r.url.path.endsWith('/api/v1/config')) {
         return _json({'soliplex_url': 'https://api'});
       }
       if (r.url.path.endsWith('/api/login')) {
