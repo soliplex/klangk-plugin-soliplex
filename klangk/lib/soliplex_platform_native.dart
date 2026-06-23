@@ -40,6 +40,7 @@ class SoliplexTokenStore {
   String get _expiresKey => 'soliplex_${namespace}_expires_at';
   String get _serverKey => 'soliplex_${namespace}_server_url';
   String get _clientKey => 'soliplex_${namespace}_client_id';
+  String get _openKey => 'soliplex_${namespace}_open_connected';
 
   Future<SharedPreferences> get _p => SharedPreferences.getInstance();
 
@@ -47,6 +48,10 @@ class SoliplexTokenStore {
   Future<String?> get refreshToken async => (await _p).getString(_refreshKey);
   Future<String?> get serverUrl async => (await _p).getString(_serverKey);
   Future<String?> get clientId async => (await _p).getString(_clientKey);
+
+  /// Whether this open/no-auth server has been marked connected by the user.
+  /// Open servers hold no token, so this is how they show as "connected".
+  Future<bool> get openConnected async => (await _p).getBool(_openKey) ?? false;
 
   Future<DateTime?> get expiresAt async {
     final v = (await _p).getString(_expiresKey);
@@ -72,6 +77,16 @@ class SoliplexTokenStore {
     if (clientId != null) await p.setString(_clientKey, clientId);
   }
 
+  /// Persist (or clear) the open/no-auth "connected" marker for this server.
+  Future<void> setOpenConnected(bool value) async {
+    final p = await _p;
+    if (value) {
+      await p.setBool(_openKey, true);
+    } else {
+      await p.remove(_openKey);
+    }
+  }
+
   Future<void> clear() async {
     final p = await _p;
     await p.remove(_accessKey);
@@ -79,6 +94,7 @@ class SoliplexTokenStore {
     await p.remove(_expiresKey);
     await p.remove(_serverKey);
     await p.remove(_clientKey);
+    await p.remove(_openKey);
   }
 }
 

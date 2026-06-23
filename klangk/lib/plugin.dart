@@ -82,7 +82,8 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   final Map<ThreadKey, List<sox.Message>> _threadHistory = {};
 
   int _msgSeq = 0;
-  String _mid(String p) => '$p-${DateTime.now().millisecondsSinceEpoch}-${_msgSeq++}';
+  String _mid(String p) =>
+      '$p-${DateTime.now().millisecondsSinceEpoch}-${_msgSeq++}';
 
   SoliplexPlugin({SoliplexServerRegistry? registry})
       : registry = registry ?? soliplexServers {
@@ -108,7 +109,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     try {
       await registry.ensureDefault();
       for (final s in registry.servers) {
-        if (await (await registry.session(s.name)).hasValidToken()) {
+        if (await (await registry.session(s.name)).isConnected()) {
           any = true;
           break;
         }
@@ -132,10 +133,22 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   /// per-server status.
   Future<bool> isServerConnected(String server) async {
     try {
-      return (await registry.session(server)).hasValidToken();
+      return (await registry.session(server)).isConnected();
     } catch (_) {
       return false;
     }
+  }
+
+  /// Mark an open (no-auth) [server] as connected. It needs no login but is
+  /// usable immediately, so the overlay treats it like a logged-in server
+  /// (green icon/dot). Best-effort: the server still works without the flag.
+  Future<void> markServerOpenConnected(String server) async {
+    try {
+      await (await registry.session(server)).markOpenConnected();
+    } catch (_) {
+      // Persisting the marker failed; the server is still usable.
+    }
+    await _refreshAuthState();
   }
 
   /// Add a server from the overlay UI (mirrors the pi `soliplex_add_server`
@@ -350,8 +363,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
           .queryRoom(roomId, question, onChunk: onChunk);
       await _refreshAuthState();
       // Seed this thread's history so a later soliplex_reply has context.
-      final key =
-          (serverId: server, roomId: roomId, threadId: result.threadId);
+      final key = (serverId: server, roomId: roomId, threadId: result.threadId);
       _threadHistory[key] = [
         sox.UserMessage(id: _mid('u'), content: question),
         sox.AssistantMessage(id: _mid('a'), content: result.text),
@@ -476,7 +488,10 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
         ];
         onChunk?.call(''); // keepalive: this target finished
         return FanOutResult(
-            server: t.server, room: t.room, answer: r.text, threadId: r.threadId);
+            server: t.server,
+            room: t.room,
+            answer: r.text,
+            threadId: r.threadId);
       } catch (e) {
         onChunk?.call(''); // keepalive even on failure
         return FanOutResult(server: t.server, room: t.room, error: '$e');
@@ -655,7 +670,8 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   Map<String, dynamic>? _authSystems;
   String? _selectedSystem;
   bool _loadingSystems = false;
-  bool _authError = false; // true only on a real fetch failure (non-200/network)
+  bool _authError =
+      false; // true only on a real fetch failure (non-200/network)
 
   // Add-server form.
   bool _showAdd = false;
@@ -715,7 +731,14 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
       // or network) is a real failure.
       final systems = await widget.plugin.getAuthSystems(server: server);
       _authSystems = systems;
-      if (systems.isNotEmpty) _selectedSystem = systems.keys.first;
+      if (systems.isNotEmpty) {
+        _selectedSystem = systems.keys.first;
+      } else {
+        // Open / no-auth server: usable immediately, so mark it connected and
+        // reflect that in the collapsed icon and this row's status dot.
+        await widget.plugin.markServerOpenConnected(server);
+        _connected[server] = true;
+      }
     } catch (e, st) {
       debugPrint('[Soliplex] Failed to load auth systems: $e\n$st');
       _authError = true;
@@ -777,7 +800,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           key: const ValueKey('soliplex_overlay_icon'),
           elevation: 4,
           shape: const CircleBorder(),
-          color: connected ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+          color: connected
+              ? scheme.primaryContainer
+              : scheme.surfaceContainerHighest,
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: _toggleExpand,
@@ -805,35 +830,38 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           elevation: 4,
           borderRadius: BorderRadius.circular(8),
           color: scheme.surface,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.hub, size: 16, color: scheme.onSurface),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text('Soliplex servers',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: scheme.onSurface)),
-                    ),
-                    InkWell(
-                      key: const ValueKey('soliplex_overlay_close'),
-                      onTap: _toggleExpand,
-                      child: Icon(Icons.close, size: 16, color: scheme.onSurface),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ..._servers.map(_serverRow),
-                const Divider(height: 16),
-                if (_showAdd) _addForm(scheme) else _addToggle(scheme),
-              ],
+          child: SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.hub, size: 16, color: scheme.onSurface),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('Soliplex servers',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: scheme.onSurface)),
+                      ),
+                      InkWell(
+                        key: const ValueKey('soliplex_overlay_close'),
+                        onTap: _toggleExpand,
+                        child: Icon(Icons.close,
+                            size: 16, color: scheme.onSurface),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ..._servers.map(_serverRow),
+                  const Divider(height: 16),
+                  if (_showAdd) _addForm(scheme) else _addToggle(scheme),
+                ],
+              ),
             ),
           ),
         ),
@@ -851,8 +879,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         Row(
           children: [
             Icon(Icons.circle,
-                size: 10,
-                color: connected ? Colors.green : scheme.outline),
+                size: 10, color: connected ? Colors.green : scheme.outline),
             const SizedBox(width: 6),
             Expanded(
               child: Text(s.name,
@@ -871,7 +898,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
             else
               TextButton(
                 key: ValueKey('soliplex_connect_${s.name}'),
-                onPressed: widget.plugin.loggingIn ? null : () => _startConnect(s.name),
+                onPressed: widget.plugin.loggingIn
+                    ? null
+                    : () => _startConnect(s.name),
                 style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     minimumSize: const Size(0, 28)),
@@ -889,7 +918,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 6),
         child: SizedBox(
-            width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
     if (_authError) {
@@ -926,7 +957,8 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ..._authSystems!.entries.map((e) {
-            final title = (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
+            final title =
+                (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
             return InkWell(
               onTap: () => setState(() => _selectedSystem = e.key),
               child: Row(
@@ -951,11 +983,14 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
             children: [
               TextButton(
                 key: const ValueKey('soliplex_connect_submit'),
-                onPressed:
-                    (widget.plugin.loggingIn || _selectedSystem == null) ? null : _doConnect,
+                onPressed: (widget.plugin.loggingIn || _selectedSystem == null)
+                    ? null
+                    : _doConnect,
                 child: widget.plugin.loggingIn
                     ? const SizedBox(
-                        width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text('Connect', style: TextStyle(fontSize: 12)),
               ),
               TextButton(
@@ -990,7 +1025,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           controller: _nameCtrl,
           style: const TextStyle(fontSize: 12),
           decoration: const InputDecoration(
-              isDense: true, labelText: 'Name', labelStyle: TextStyle(fontSize: 12)),
+              isDense: true,
+              labelText: 'Name',
+              labelStyle: TextStyle(fontSize: 12)),
         ),
         const SizedBox(height: 4),
         TextField(

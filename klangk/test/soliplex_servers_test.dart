@@ -62,18 +62,21 @@ void main() {
     test('addServer registers a named server and strips trailing slash',
         () async {
       final reg = SoliplexServerRegistry(
-        httpClient: MockClient((req) async => _json({'soliplex_url': 'https://d'})),
+        httpClient:
+            MockClient((req) async => _json({'soliplex_url': 'https://d'})),
       );
       await reg.addServer('staging', 'https://staging.example.net/');
       final s = await reg.resolve('staging');
       expect(s.baseUrl, 'https://staging.example.net');
-      expect(reg.servers.map((e) => e.name), containsAll(['default', 'staging']));
+      expect(
+          reg.servers.map((e) => e.name), containsAll(['default', 'staging']));
     });
 
     test('resolve throws StateError listing known names for unknown server',
         () async {
       final reg = SoliplexServerRegistry(
-        httpClient: MockClient((req) async => _json({'soliplex_url': 'https://d'})),
+        httpClient:
+            MockClient((req) async => _json({'soliplex_url': 'https://d'})),
       );
       await reg.addServer('staging', 'https://s');
       expect(
@@ -86,7 +89,8 @@ void main() {
     test('session is cached per server and shares the registry http client',
         () async {
       final reg = SoliplexServerRegistry(
-        httpClient: MockClient((req) async => _json({'soliplex_url': 'https://d'})),
+        httpClient:
+            MockClient((req) async => _json({'soliplex_url': 'https://d'})),
       );
       final a = await reg.session('default');
       final b = await reg.session('default');
@@ -96,7 +100,8 @@ void main() {
 
     test('re-adding a server drops its cached session', () async {
       final reg = SoliplexServerRegistry(
-        httpClient: MockClient((req) async => _json({'soliplex_url': 'https://d'})),
+        httpClient:
+            MockClient((req) async => _json({'soliplex_url': 'https://d'})),
       );
       await reg.addServer('s', 'https://one');
       final first = await reg.session('s');
@@ -115,14 +120,16 @@ void main() {
         httpClient: MockClient((req) async =>
             throw StateError('http must not be called when asset present')),
       );
-      expect((await reg.resolve('default')).baseUrl, 'https://asset.example.net');
+      expect(
+          (await reg.resolve('default')).baseUrl, 'https://asset.example.net');
     });
 
-    test('falls back to /api/v1/config when the loader yields nothing', () async {
+    test('falls back to /api/v1/config when the loader yields nothing',
+        () async {
       final reg = SoliplexServerRegistry(
         defaultUrlLoader: () async => null,
-        httpClient:
-            MockClient((req) async => _json({'soliplex_url': 'https://legacy'})),
+        httpClient: MockClient(
+            (req) async => _json({'soliplex_url': 'https://legacy'})),
       );
       expect((await reg.resolve('default')).baseUrl, 'https://legacy');
     });
@@ -130,8 +137,8 @@ void main() {
     test('loader throwing falls back to /api/v1/config', () async {
       final reg = SoliplexServerRegistry(
         defaultUrlLoader: () async => throw Exception('no asset'),
-        httpClient:
-            MockClient((req) async => _json({'soliplex_url': 'https://legacy'})),
+        httpClient: MockClient(
+            (req) async => _json({'soliplex_url': 'https://legacy'})),
       );
       expect((await reg.resolve('default')).baseUrl, 'https://legacy');
     });
@@ -177,6 +184,25 @@ void main() {
       expect(reg.names, contains('default'));
     });
 
+    test(
+        'open/no-auth server: markOpenConnected flips isConnected; logout '
+        'clears it', () async {
+      final reg = SoliplexServerRegistry(
+        httpClient:
+            MockClient((req) async => _json({'soliplex_url': 'https://d'})),
+      );
+      final session = await reg.session('default');
+      // No token and not marked → not connected.
+      expect(await session.isConnected(), isFalse);
+      // Connecting to an open server marks it (no token involved).
+      await session.markOpenConnected();
+      expect(await session.isConnected(), isTrue);
+      expect(await session.hasValidToken(), isFalse);
+      // Logout clears the open marker just like real tokens.
+      await session.clearStoredTokens();
+      expect(await session.isConnected(), isFalse);
+    });
+
     test('corrupt persisted JSON is ignored, default still resolves', () async {
       SharedPreferences.setMockInitialValues({'soliplex_servers': 'not json{'});
       final reg = SoliplexServerRegistry(
@@ -189,7 +215,8 @@ void main() {
   });
 
   group('SoliplexServerSession', () {
-    SoliplexServerSession session(http.Client client, {String name = 'default'}) =>
+    SoliplexServerSession session(http.Client client,
+            {String name = 'default'}) =>
         SoliplexServerSession(
           server: SoliplexServer(name: name, baseUrl: 'https://api'),
           httpClient: client,
@@ -213,7 +240,8 @@ void main() {
       expect(h['Authorization'], 'Bearer tok');
     });
 
-    test('hasValidToken: false when absent, true when fresh, false when expired',
+    test(
+        'hasValidToken: false when absent, true when fresh, false when expired',
         () async {
       final s = session(MockClient((req) async => _json({})));
       expect(await s.hasValidToken(), isFalse);
@@ -223,7 +251,8 @@ void main() {
         'soliplex_default_expires_at':
             DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
       });
-      expect(await session(MockClient((req) async => _json({}))).hasValidToken(),
+      expect(
+          await session(MockClient((req) async => _json({}))).hasValidToken(),
           isTrue);
 
       SharedPreferences.setMockInitialValues({
@@ -231,7 +260,8 @@ void main() {
         'soliplex_default_expires_at':
             DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
       });
-      expect(await session(MockClient((req) async => _json({}))).hasValidToken(),
+      expect(
+          await session(MockClient((req) async => _json({}))).hasValidToken(),
           isFalse);
     });
 
@@ -276,12 +306,14 @@ void main() {
     test('getAuthSystems returns systems; empty is no-auth (not an error)',
         () async {
       expect(
-        await session(MockClient((req) async => _json({'kc': {'title': 'KC'}})))
-            .getAuthSystems(),
+        await session(MockClient((req) async => _json({
+              'kc': {'title': 'KC'}
+            }))).getAuthSystems(),
         containsPair('kc', {'title': 'KC'}),
       );
       // Empty /api/login = open / no-auth server — a valid empty map, NOT a throw.
-      expect(await session(MockClient((req) async => _json({}))).getAuthSystems(),
+      expect(
+          await session(MockClient((req) async => _json({}))).getAuthSystems(),
           isEmpty);
       // Only a non-200 is a real failure.
       expect(

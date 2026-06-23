@@ -110,6 +110,17 @@ class SoliplexServerSession {
     return expiresAt.isAfter(DateTime.now().add(const Duration(seconds: 30)));
   }
 
+  /// Whether this server is "connected" for UI purposes: it either holds a
+  /// valid token, or it is an open/no-auth server the user has connected to.
+  /// Open servers carry no token but are usable immediately, so the overlay
+  /// shows them connected once the user clicks Connect.
+  Future<bool> isConnected() async =>
+      (await hasValidToken()) || (await store.openConnected);
+
+  /// Record that this open/no-auth server has been connected to. Cleared by
+  /// [clearStoredTokens] (logout), just like real tokens.
+  Future<void> markOpenConnected() => store.setOpenConnected(true);
+
   /// Get a valid access token: cached if fresh, else silent refresh, else
   /// throw (caller directs the user to the "Connect to Soliplex" overlay).
   Future<String> getAccessToken() async {
@@ -224,8 +235,8 @@ class SoliplexServerRegistry {
     }
     if (url.isEmpty) {
       try {
-        final resp =
-            await _http.get(Uri.parse('${soliplexBackendBase()}/api/v1/config'));
+        final resp = await _http
+            .get(Uri.parse('${soliplexBackendBase()}/api/v1/config'));
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body) as Map<String, dynamic>;
           url = (data['soliplex_url'] as String? ?? '')

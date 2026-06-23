@@ -38,7 +38,8 @@ Future<void> pumpOverlay(WidgetTester tester, SoliplexPlugin plugin) =>
     ));
 
 SoliplexPlugin _plugin() => SoliplexPlugin(
-    registry: SoliplexServerRegistry(httpClient: MockClient((r) async => _routes(r))));
+    registry: SoliplexServerRegistry(
+        httpClient: MockClient((r) async => _routes(r))));
 
 const _iconKey = ValueKey('soliplex_overlay_icon');
 
@@ -60,8 +61,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Soliplex servers'), findsOneWidget);
     expect(find.text('default'), findsOneWidget);
-    expect(find.byKey(const ValueKey('soliplex_connect_default')),
-        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_default')), findsOneWidget);
   });
 
   testWidgets('connected default shows Logout instead of Connect',
@@ -75,9 +76,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(_iconKey));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('soliplex_logout_default')),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('soliplex_connect_default')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('soliplex_logout_default')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_default')), findsNothing);
   });
 
   testWidgets('add-server form registers a new server row', (tester) async {
@@ -94,8 +96,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
     await tester.pumpAndSettle();
     expect(find.text('staging'), findsOneWidget);
-    expect(find.byKey(const ValueKey('soliplex_connect_staging')),
-        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_staging')), findsOneWidget);
   });
 
   testWidgets('connect flow loads a server\'s auth systems', (tester) async {
@@ -106,8 +108,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('soliplex_connect_default')));
     await tester.pumpAndSettle();
     expect(find.text('Keycloak SSO'), findsOneWidget);
-    expect(find.byKey(const ValueKey('soliplex_connect_submit')),
-        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_submit')), findsOneWidget);
   });
 
   // The examplehost scenario: /api/login returns {} (open server). Connecting
@@ -130,6 +132,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('No login required'), findsOneWidget);
     expect(find.text('Failed to load providers'), findsNothing);
+    // An open server is usable immediately, so connecting marks it connected:
+    // the collapsed icon goes green (authenticated) and the row flips to Logout.
+    expect(plugin.authenticated, isTrue);
+    expect(
+        find.byKey(const ValueKey('soliplex_logout_default')), findsOneWidget);
+  });
+
+  testWidgets('expanded overlay wraps its content in a SelectionArea',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    // All overlay text (server names, providers, errors) is selectable.
+    expect(find.byType(SelectionArea), findsOneWidget);
   });
 
   testWidgets('real fetch failure (non-200 /api/login) shows the error',

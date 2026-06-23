@@ -30,6 +30,7 @@ class SoliplexTokenStore {
   String get _expiresKey => 'soliplex_${namespace}_expires_at';
   String get _serverKey => 'soliplex_${namespace}_server_url';
   String get _clientKey => 'soliplex_${namespace}_client_id';
+  String get _openKey => 'soliplex_${namespace}_open_connected';
 
   web.Storage get _ls => web.window.localStorage;
 
@@ -37,6 +38,10 @@ class SoliplexTokenStore {
   Future<String?> get refreshToken async => _ls.getItem(_refreshKey);
   Future<String?> get serverUrl async => _ls.getItem(_serverKey);
   Future<String?> get clientId async => _ls.getItem(_clientKey);
+
+  /// Whether this open/no-auth server has been marked connected by the user.
+  /// Open servers hold no token, so this is how they show as "connected".
+  Future<bool> get openConnected async => _ls.getItem(_openKey) == 'true';
 
   Future<DateTime?> get expiresAt async {
     final v = _ls.getItem(_expiresKey);
@@ -60,12 +65,22 @@ class SoliplexTokenStore {
     if (clientId != null) _ls.setItem(_clientKey, clientId);
   }
 
+  /// Persist (or clear) the open/no-auth "connected" marker for this server.
+  Future<void> setOpenConnected(bool value) async {
+    if (value) {
+      _ls.setItem(_openKey, 'true');
+    } else {
+      _ls.removeItem(_openKey);
+    }
+  }
+
   Future<void> clear() async {
     _ls.removeItem(_accessKey);
     _ls.removeItem(_refreshKey);
     _ls.removeItem(_expiresKey);
     _ls.removeItem(_serverKey);
     _ls.removeItem(_clientKey);
+    _ls.removeItem(_openKey);
   }
 }
 
@@ -136,8 +151,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
         final refreshToken = uri.queryParameters['refresh_token'];
         final expiresIn = uri.queryParameters['expires_in'];
         if (token == null || token.isEmpty) {
-          completer
-              .completeError(Exception('No token in auth callback'));
+          completer.completeError(Exception('No token in auth callback'));
           return;
         }
         final expiresAt = expiresIn != null
