@@ -1,16 +1,38 @@
 import { Type } from "@sinclair/typebox";
+import { execSync } from "child_process";
 
 // Pi extension: exposes Soliplex room tools to the agent. Each tool delegates
 // to the user's browser session (where the Flutter soliplex plugin holds the
 // auth + talks to the Soliplex server) via the klangk browser-delegate bridge.
 //
-// We use the *streaming* bridge endpoint (/api/browser-delegate/stream): the
+// We use the *streaming* bridge endpoint (/api/v1/browser-delegate/stream): the
 // browser pushes incremental chunks which we read as they arrive. That keeps
 // the connection alive for long RAG + LLM answers, so the old fixed 30s
 // round-trip timeout no longer applies — only the per-chunk idle timeout does.
 
 const BRIDGE_URL = process.env.KLANGK_BRIDGE_URL;
-const BRIDGE_TOKEN = process.env.KLANGK_BRIDGE_TOKEN;
+
+/**
+ * Read the current browser ID from klangk-browser-id.
+ *
+ * Call this per-request, not once at module load — the ID changes
+ * when the user refreshes the browser or switches tabs.
+ */
+function getBrowserId(): string {
+  try {
+    return execSync("klangk-browser-id", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function getWorkspaceToken(): string {
+  try {
+    return execSync("klangk-workspace-token", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 interface BridgeResult {
   text: string;
@@ -26,10 +48,14 @@ async function streamBridge(
   params: Record<string, unknown>,
   onUpdate?: (update: unknown) => void,
 ): Promise<BridgeResult> {
-  const resp = await fetch(`${BRIDGE_URL}/api/browser-delegate/stream`, {
+  const token = getWorkspaceToken();
+  const resp = await fetch(`${BRIDGE_URL}/api/v1/browser-delegate/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, token: BRIDGE_TOKEN, ...params }),
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ action, browser_id: getBrowserId(), ...params }),
   });
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
@@ -118,7 +144,7 @@ function callLine(text: string): { render: (w: number) => string[]; invalidate: 
 }
 
 export default function (pi: any) {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
+  if (!BRIDGE_URL) return;
 
   pi.registerTool({
     name: "soliplex_list_rooms",

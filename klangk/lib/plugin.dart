@@ -692,7 +692,8 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
       final systems = await widget.plugin.getAuthSystems(server: server);
       _authSystems = systems;
       if (systems.isNotEmpty) _selectedSystem = systems.keys.first;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[Soliplex] Failed to load auth systems: $e\n$st');
       _authError = true;
     } finally {
       _loadingSystems = false;
