@@ -27,11 +27,20 @@ String soliplexBackendBase() {
 /// localStorage store. (Upgrade to flutter_secure_storage/Keychain later by
 /// granting the keychain-access-groups entitlement.)
 class SoliplexTokenStore {
-  static const _accessKey = 'soliplex_access_token';
-  static const _refreshKey = 'soliplex_refresh_token';
-  static const _expiresKey = 'soliplex_expires_at';
-  static const _serverKey = 'soliplex_server_url';
-  static const _clientKey = 'soliplex_client_id';
+  /// [namespace] isolates one server's tokens from another's: every key is
+  /// prefixed with it, so multi-server deployments keep independent auth.
+  /// Defaults to 'default' (the server resolved from the klangk backend
+  /// config), matching the single-server history.
+  SoliplexTokenStore({this.namespace = 'default'});
+
+  final String namespace;
+
+  String get _accessKey => 'soliplex_${namespace}_access_token';
+  String get _refreshKey => 'soliplex_${namespace}_refresh_token';
+  String get _expiresKey => 'soliplex_${namespace}_expires_at';
+  String get _serverKey => 'soliplex_${namespace}_server_url';
+  String get _clientKey => 'soliplex_${namespace}_client_id';
+  String get _openKey => 'soliplex_${namespace}_open_connected';
 
   Future<SharedPreferences> get _p => SharedPreferences.getInstance();
 
@@ -39,6 +48,10 @@ class SoliplexTokenStore {
   Future<String?> get refreshToken async => (await _p).getString(_refreshKey);
   Future<String?> get serverUrl async => (await _p).getString(_serverKey);
   Future<String?> get clientId async => (await _p).getString(_clientKey);
+
+  /// Whether this open/no-auth server has been marked connected by the user.
+  /// Open servers hold no token, so this is how they show as "connected".
+  Future<bool> get openConnected async => (await _p).getBool(_openKey) ?? false;
 
   Future<DateTime?> get expiresAt async {
     final v = (await _p).getString(_expiresKey);
@@ -64,6 +77,16 @@ class SoliplexTokenStore {
     if (clientId != null) await p.setString(_clientKey, clientId);
   }
 
+  /// Persist (or clear) the open/no-auth "connected" marker for this server.
+  Future<void> setOpenConnected(bool value) async {
+    final p = await _p;
+    if (value) {
+      await p.setBool(_openKey, true);
+    } else {
+      await p.remove(_openKey);
+    }
+  }
+
   Future<void> clear() async {
     final p = await _p;
     await p.remove(_accessKey);
@@ -71,7 +94,23 @@ class SoliplexTokenStore {
     await p.remove(_expiresKey);
     await p.remove(_serverKey);
     await p.remove(_clientKey);
+    await p.remove(_openKey);
   }
+}
+
+/// Global (non-namespaced) store for the plugin's server registry: the list of
+/// servers the user (Flutter overlay) or agent (pi `soliplex_add_server`) has
+/// added, persisted as a JSON string so they survive reloads. Distinct from the
+/// per-server [SoliplexTokenStore] — this holds the *set* of servers, not auth.
+class SoliplexConfigStore {
+  static const _serversKey = 'soliplex_servers';
+
+  Future<SharedPreferences> get _p => SharedPreferences.getInstance();
+
+  Future<String?> readServersJson() async => (await _p).getString(_serversKey);
+
+  Future<void> writeServersJson(String json) async =>
+      (await _p).setString(_serversKey, json);
 }
 
 /// Interactive login via flutter_appauth: opens the system browser to the IdP

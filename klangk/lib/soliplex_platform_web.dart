@@ -17,11 +17,20 @@ String soliplexBackendBase() => baseUrl;
 /// localStorage-backed token store. Reads are synchronous but presented as
 /// Futures so callers share one surface with the native (Keychain) store.
 class SoliplexTokenStore {
-  static const _accessKey = 'soliplex_access_token';
-  static const _refreshKey = 'soliplex_refresh_token';
-  static const _expiresKey = 'soliplex_expires_at';
-  static const _serverKey = 'soliplex_server_url';
-  static const _clientKey = 'soliplex_client_id';
+  /// [namespace] isolates one server's tokens from another's: every key is
+  /// prefixed with it, so multi-server deployments keep independent auth.
+  /// Defaults to 'default' (the server resolved from the klangk backend
+  /// config), matching the single-server history.
+  SoliplexTokenStore({this.namespace = 'default'});
+
+  final String namespace;
+
+  String get _accessKey => 'soliplex_${namespace}_access_token';
+  String get _refreshKey => 'soliplex_${namespace}_refresh_token';
+  String get _expiresKey => 'soliplex_${namespace}_expires_at';
+  String get _serverKey => 'soliplex_${namespace}_server_url';
+  String get _clientKey => 'soliplex_${namespace}_client_id';
+  String get _openKey => 'soliplex_${namespace}_open_connected';
 
   web.Storage get _ls => web.window.localStorage;
 
@@ -29,6 +38,10 @@ class SoliplexTokenStore {
   Future<String?> get refreshToken async => _ls.getItem(_refreshKey);
   Future<String?> get serverUrl async => _ls.getItem(_serverKey);
   Future<String?> get clientId async => _ls.getItem(_clientKey);
+
+  /// Whether this open/no-auth server has been marked connected by the user.
+  /// Open servers hold no token, so this is how they show as "connected".
+  Future<bool> get openConnected async => _ls.getItem(_openKey) == 'true';
 
   Future<DateTime?> get expiresAt async {
     final v = _ls.getItem(_expiresKey);
@@ -52,13 +65,38 @@ class SoliplexTokenStore {
     if (clientId != null) _ls.setItem(_clientKey, clientId);
   }
 
+  /// Persist (or clear) the open/no-auth "connected" marker for this server.
+  Future<void> setOpenConnected(bool value) async {
+    if (value) {
+      _ls.setItem(_openKey, 'true');
+    } else {
+      _ls.removeItem(_openKey);
+    }
+  }
+
   Future<void> clear() async {
     _ls.removeItem(_accessKey);
     _ls.removeItem(_refreshKey);
     _ls.removeItem(_expiresKey);
     _ls.removeItem(_serverKey);
     _ls.removeItem(_clientKey);
+    _ls.removeItem(_openKey);
   }
+}
+
+/// Global (non-namespaced) store for the plugin's server registry: the list of
+/// servers the user (Flutter overlay) or agent (pi `soliplex_add_server`) has
+/// added, persisted as a JSON string so they survive reloads. Distinct from the
+/// per-server [SoliplexTokenStore] — this holds the *set* of servers, not auth.
+class SoliplexConfigStore {
+  static const _serversKey = 'soliplex_servers';
+
+  web.Storage get _ls => web.window.localStorage;
+
+  Future<String?> readServersJson() async => _ls.getItem(_serversKey);
+
+  Future<void> writeServersJson(String json) async =>
+      _ls.setItem(_serversKey, json);
 }
 
 /// Popup OIDC login. Must be called from a user gesture to avoid popup
@@ -87,7 +125,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   // our origin makes the popup land here, same-origin, so the poller can read
   // `token=`. NOTE: the Soliplex server must allow this return_to origin.
   final callbackPath = Uri.encodeComponent(
-      '${web.window.location.origin}/soliplex-auth-callback');
+      '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
@@ -113,8 +151,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
         final refreshToken = uri.queryParameters['refresh_token'];
         final expiresIn = uri.queryParameters['expires_in'];
         if (token == null || token.isEmpty) {
-          completer
-              .completeError(Exception('No token in auth callback'));
+          completer.completeError(Exception('No token in auth callback'));
           return;
         }
         final expiresAt = expiresIn != null
