@@ -87,7 +87,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   // our origin makes the popup land here, same-origin, so the poller can read
   // `token=`. NOTE: the Soliplex server must allow this return_to origin.
   final callbackPath = Uri.encodeComponent(
-      '${web.window.location.origin}/soliplex-auth-callback');
+      '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
