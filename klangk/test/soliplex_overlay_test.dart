@@ -112,7 +112,7 @@ void main() {
         find.byKey(const ValueKey('soliplex_connect_submit')), findsOneWidget);
   });
 
-  // The examplehost scenario: /api/login returns {} (open server). Connecting
+  // Open-server scenario: /api/login returns {} (no-auth server). Connecting
   // must say "no login required", NOT "Failed to load providers".
   testWidgets('no-auth server (empty /api/login) shows open, not an error',
       (tester) async {
