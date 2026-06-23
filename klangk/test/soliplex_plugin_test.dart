@@ -83,15 +83,18 @@ void main() {
         if (req.url.path.endsWith('/api/v1/rooms/kb/agui')) {
           return _json({
             'threads': [
-              {'thread_id': 't1', 'metadata': {'name': 'Design chat'}},
+              {
+                'thread_id': 't1',
+                'metadata': {'name': 'Design chat'}
+              },
               {'thread_id': 't2'},
             ],
           });
         }
         return http.Response('unexpected ${req.url}', 404);
       }));
-      final out = await plugin.handlers['soliplex_list_threads']!(
-          {'room_id': 'kb'});
+      final out =
+          await plugin.handlers['soliplex_list_threads']!({'room_id': 'kb'});
       expect(out, contains('Threads in room "kb" on "default"'));
       expect(out, contains('- t1: Design chat'));
       expect(out, contains('- t2: (untitled)'));
@@ -110,6 +113,57 @@ void main() {
     });
   });
 
+  group('soliplex_get_room_info', () {
+    test('requires room_id (returns before network)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
+      expect(await plugin.handlers['soliplex_get_room_info']!({}),
+          'Error: room_id is required');
+    });
+
+    test('formats name, description, flags, and suggestions', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms/kb')) {
+          return _json({
+            'name': 'Knowledge Base',
+            'description': 'Docs Q&A',
+            'welcome_message': 'Ask me anything',
+            'enable_attachments': true,
+            'suggestions': ['What is X?', 'How do I Y?'],
+          });
+        }
+        return http.Response('unexpected ${req.url}', 404);
+      }));
+      final out =
+          await plugin.handlers['soliplex_get_room_info']!({'room_id': 'kb'});
+      expect(out, contains('Room "kb" on "default"'));
+      expect(out, contains('- name: Knowledge Base'));
+      expect(out, contains('- description: Docs Q&A'));
+      expect(out, contains('- welcome: Ask me anything'));
+      expect(out, contains('attachments'));
+      expect(out, contains('- suggestions:'));
+      expect(out, contains('  - What is X?'));
+      expect(out, contains('  - How do I Y?'));
+    });
+
+    test('no suggestions reports (none)', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms/kb')) {
+          return _json({'name': 'KB'});
+        }
+        return http.Response('unexpected ${req.url}', 404);
+      }));
+      final out =
+          await plugin.handlers['soliplex_get_room_info']!({'room_id': 'kb'});
+      expect(out, contains('- suggestions: (none)'));
+    });
+  });
+
   group('argument validation (returns before any network)', () {
     test('soliplex_query requires a question', () async {
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
@@ -122,8 +176,8 @@ void main() {
       expect(await plugin.handlers['soliplex_reply']!({'message': 'hi'}),
           'Error: thread_id is required');
       expect(
-          await plugin.handlers['soliplex_reply']!(
-              {'thread_id': 't1', 'message': ''}),
+          await plugin
+              .handlers['soliplex_reply']!({'thread_id': 't1', 'message': ''}),
           'Error: message is required');
     });
   });
@@ -133,10 +187,10 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
 
-      expect(await plugin.handlers['soliplex_add_server']!({'url': 'https://x'}),
-          'Error: name is required');
       expect(
-          await plugin.handlers['soliplex_add_server']!({'name': 'staging'}),
+          await plugin.handlers['soliplex_add_server']!({'url': 'https://x'}),
+          'Error: name is required');
+      expect(await plugin.handlers['soliplex_add_server']!({'name': 'staging'}),
           'Error: url is required');
       expect(
           await plugin.handlers['soliplex_add_server']!(
@@ -162,18 +216,16 @@ void main() {
       expect(
           await plugin.handlers['soliplex_remove_server']!({'name': 'default'}),
           contains('reserved'));
-      expect(
-          await plugin.handlers['soliplex_remove_server']!({'name': 'nope'}),
+      expect(await plugin.handlers['soliplex_remove_server']!({'name': 'nope'}),
           contains('no soliplex server named "nope"'));
 
       await plugin.handlers['soliplex_add_server']!(
           {'name': 'staging', 'url': 'https://staging.example/'});
-      expect(
-          await plugin.handlers['soliplex_list_servers']!({}),
+      expect(await plugin.handlers['soliplex_list_servers']!({}),
           contains('- staging:'));
 
-      final removed = await plugin.handlers['soliplex_remove_server']!(
-          {'name': 'staging'});
+      final removed =
+          await plugin.handlers['soliplex_remove_server']!({'name': 'staging'});
       expect(removed, contains('Removed soliplex server "staging"'));
 
       final listed = await plugin.handlers['soliplex_list_servers']!({});
@@ -185,8 +237,10 @@ void main() {
   group('streaming handlers are registered for query and reply', () {
     test('streamingHandlers expose query, query_all + reply', () {
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
-      expect(plugin.streamingHandlers.keys,
-          containsAll(['soliplex_query', 'soliplex_query_all', 'soliplex_reply']));
+      expect(
+          plugin.streamingHandlers.keys,
+          containsAll(
+              ['soliplex_query', 'soliplex_query_all', 'soliplex_reply']));
     });
   });
 
@@ -215,8 +269,7 @@ void main() {
           await plugin.handlers['soliplex_query_all']!(
               {'question': 'q', 'targets': <dynamic>[]}),
           contains('at least one target'));
-      expect(
-          await plugin.handlers['soliplex_query_all']!({'question': 'q'}),
+      expect(await plugin.handlers['soliplex_query_all']!({'question': 'q'}),
           contains('at least one target'));
     });
 
@@ -347,7 +400,8 @@ void main() {
         return _json({'soliplex_url': 'https://api'});
       }
       // GET file download: .../file/<name>
-      if (req.method == 'GET' && path.contains('/uploads/') &&
+      if (req.method == 'GET' &&
+          path.contains('/uploads/') &&
           path.contains('/file/')) {
         return http.Response('# contents', 200,
             headers: {'content-type': 'text/markdown'});
@@ -380,6 +434,27 @@ void main() {
           await plugin.handlers['soliplex_list_files']!({'room_id': 'kb'});
       expect(out, contains('Files in room "kb" on "default"'));
       expect(out, contains('- readme.md'));
+    });
+
+    test('file tools are blocked when the room disables attachments', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms/locked')) {
+          return _json({'name': 'Locked', 'enable_attachments': false});
+        }
+        return http.Response('unexpected ${req.url}', 404);
+      }));
+      final list =
+          await plugin.handlers['soliplex_list_files']!({'room_id': 'locked'});
+      expect(list, contains('attachments are disabled'));
+      final up = await plugin.handlers['soliplex_upload_file']!(
+          {'room_id': 'locked', 'filename': 'x.txt', 'content': 'hi'});
+      expect(up, contains('attachments are disabled'));
+      final get = await plugin.handlers['soliplex_get_file']!(
+          {'room_id': 'locked', 'filename': 'x.txt'});
+      expect(get, contains('attachments are disabled'));
     });
 
     test('soliplex_list_files passes thread_id through to the thread scope',
@@ -433,8 +508,7 @@ void main() {
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
       expect(await plugin.handlers['soliplex_upload_file']!({}),
           'Error: room_id is required');
-      expect(
-          await plugin.handlers['soliplex_upload_file']!({'room_id': 'kb'}),
+      expect(await plugin.handlers['soliplex_upload_file']!({'room_id': 'kb'}),
           'Error: filename is required');
       // Neither content nor content_base64.
       expect(
@@ -510,7 +584,8 @@ void main() {
           room: 'docs',
           // queryRoom already appends its own "Sources" block to the answer;
           // formatFanOut must pass it through untouched.
-          answer: 'RAG augments the LLM with retrieval.\n\nSources:\n[1] rag.md',
+          answer:
+              'RAG augments the LLM with retrieval.\n\nSources:\n[1] rag.md',
           threadId: 'th-1',
         ),
         FanOutResult(server: 'staging', room: 'kb', error: 'Bridge down (503)'),
@@ -521,7 +596,8 @@ void main() {
       expect(out, contains('## default/docs'));
       expect(out, contains('Sources:\n[1] rag.md'));
       expect(out, contains('thread_id: th-1'));
-      expect(out, contains('soliplex_reply(server, room_id, thread_id, message)'));
+      expect(
+          out, contains('soliplex_reply(server, room_id, thread_id, message)'));
       // Failure block is inline, labeled, and does not carry a thread_id.
       expect(out, contains('## staging/kb\nError: Bridge down (503)'));
     });

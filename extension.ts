@@ -173,6 +173,42 @@ export default function (pi: any) {
   });
 
   pi.registerTool({
+    name: "soliplex_get_room_info",
+    description:
+      "Get a Soliplex room's info — name, description, welcome message, and " +
+      "its suggested prompts (the example questions to ask in that room) — " +
+      "plus capability flags. Use the room_id from soliplex_list_rooms.",
+    parameters: Type.Object({
+      room_id: Type.String({
+        description: "Room id (from soliplex_list_rooms).",
+      }),
+      server: Type.Optional(
+        Type.String({
+          description: "Soliplex server name. Omit for the default server.",
+        }),
+      ),
+    }),
+    renderCall(args: any) {
+      const a = args ?? {};
+      const srv = oneLine(a.server);
+      return callLine(
+        `soliplex_get_room_info(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"})`,
+      );
+    },
+    async execute(_id: string, params: { room_id: string; server?: string }) {
+      try {
+        const { text, error } = await streamBridge("soliplex_get_room_info", {
+          room_id: params.room_id,
+          server: params.server,
+        });
+        return textResult(error ? `Error: ${error}` : text);
+      } catch (e: any) {
+        return textResult(`soliplex_get_room_info failed: ${e?.message ?? e}`);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "soliplex_list_threads",
     description:
       "List the conversation threads in a Soliplex room (thread_id, name, " +
@@ -260,14 +296,18 @@ export default function (pi: any) {
   pi.registerTool({
     name: "soliplex_query_all",
     description:
-      "Ask ONE question of MANY Soliplex rooms across servers in parallel and " +
-      "get a single aggregated answer, labeled per target. Each target is " +
-      "{server?, room}; omit server for the default. Use room: \"*\" to fan out " +
-      "to every room on that server. The result has a `## server/room` section " +
-      "per target with that room's answer (and its Sources) plus a thread_id you " +
-      "can pass to soliplex_reply to continue a specific one. A target that " +
-      "fails (server down, auth, unknown) shows an Error line but the others " +
-      "still return. Long-running fan-outs stream and will not time out.",
+      "Ask ONE natural-language question of MANY Soliplex rooms at once and get " +
+      "a single aggregated, per-target answer. This is a KNOWLEDGE query: each " +
+      "target opens a NEW thread and answers from that room's indexed content " +
+      "(RAG). It is NOT for room metadata (use soliplex_get_room_info) or files " +
+      "(use soliplex_list_files / soliplex_get_file). Each target is " +
+      "{server?, room}; omit server for the default; room: \"*\" fans out to " +
+      "every room on that server. The result has a `## server/room` section per " +
+      "target with that room's answer (and its Sources) plus a thread_id you can " +
+      "pass to soliplex_reply to continue that specific conversation. A failed " +
+      "target (down, auth, unknown) shows an Error line while the others still " +
+      "return. Fan-outs stream incrementally; a target silent longer than the " +
+      "bridge idle timeout can still time out.",
     parameters: Type.Object({
       question: Type.String({ description: "The question to ask every target." }),
       targets: Type.Array(
@@ -452,7 +492,8 @@ export default function (pi: any) {
     description:
       "List the files uploaded to a Soliplex room, or to a specific thread " +
       "within it (pass thread_id). Returns the filenames; fetch a file's " +
-      "contents with soliplex_get_file.",
+      "contents with soliplex_get_file. Only works when the room has " +
+      "attachments enabled (check soliplex_get_room_info).",
     parameters: Type.Object({
       room_id: Type.String({
         description: "Room id (from soliplex_list_rooms).",
@@ -499,7 +540,8 @@ export default function (pi: any) {
     description:
       "Download a file uploaded to a Soliplex room (or thread). Text files are " +
       "returned inline; binary files are returned base64-encoded with a note " +
-      "and their content type.",
+      "and their content type. Only works when the room has attachments enabled " +
+      "(check soliplex_get_room_info).",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the file." }),
       filename: Type.String({
@@ -552,7 +594,8 @@ export default function (pi: any) {
     description:
       "Upload a file to a Soliplex room (or thread). Provide EXACTLY ONE of " +
       "`content` (UTF-8 text) or `content_base64` (base64-encoded binary). " +
-      "Optionally set content_type (e.g. text/markdown, application/pdf).",
+      "Optionally set content_type (e.g. text/markdown, application/pdf). Only " +
+      "works when the room has attachments enabled (check soliplex_get_room_info).",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id to upload into." }),
       filename: Type.String({ description: "Name to store the file under." }),

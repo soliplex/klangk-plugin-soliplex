@@ -58,6 +58,40 @@ String formatFanOut(String question, List<FanOutResult> results) {
   return 'Asked ${results.length} target(s): "$question"\n\n$blocks';
 }
 
+/// Render one room's info block (pi `soliplex_get_room_info`). PURE (no I/O) so
+/// the shape is unit-testable. Leads with name/description/welcome, then the
+/// **suggested prompts** — the "what can I ask here?" hints the agent surfaces.
+String formatRoomInfo(String server, String roomId, Map<String, dynamic> room) {
+  final name = (room['name'] as String?)?.trim();
+  final desc = (room['description'] as String?)?.trim();
+  final welcome =
+      ((room['welcome_message'] ?? room['welcomeMessage']) as String?)?.trim();
+  final rawSuggestions = room['suggestions'];
+  final suggestions = rawSuggestions is List
+      ? rawSuggestions.whereType<String>().toList()
+      : const <String>[];
+
+  final lines = <String>['Room "$roomId" on "$server":'];
+  lines.add('- name: ${(name == null || name.isEmpty) ? roomId : name}');
+  if (desc != null && desc.isNotEmpty) lines.add('- description: $desc');
+  if (welcome != null && welcome.isNotEmpty) lines.add('- welcome: $welcome');
+
+  final flags = <String>[];
+  if (room['enable_attachments'] == true || room['enableAttachments'] == true) {
+    flags.add('attachments');
+  }
+  if (room['allow_mcp'] == true || room['allowMcp'] == true) flags.add('mcp');
+  if (flags.isNotEmpty) lines.add('- enabled: ${flags.join(', ')}');
+
+  if (suggestions.isEmpty) {
+    lines.add('- suggestions: (none)');
+  } else {
+    lines.add('- suggestions:');
+    lines.addAll(suggestions.map((s) => '  - $s'));
+  }
+  return lines.join('\n');
+}
+
 /// Knowledge-base plugin: bridges the agent's `soliplex_list_rooms` /
 /// `soliplex_query` tools to the user's Soliplex server, with an auth overlay.
 ///
@@ -181,6 +215,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   @override
   Map<String, ToolHandler> get handlers => {
         'soliplex_list_rooms': _listRooms,
+        'soliplex_get_room_info': _getRoomInfo,
         'soliplex_list_threads': _listThreads,
         'soliplex_query': _query,
         'soliplex_query_all': _queryAll,
@@ -341,6 +376,24 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     } catch (e) {
       await _refreshAuthState();
       return 'Error listing threads in "$roomId" on "$server": $e';
+    }
+  }
+
+  /// Fetch one room's info — name, description, welcome message, and the
+  /// suggested prompts (pi `soliplex_get_room_info` tool). Pairs with
+  /// soliplex_list_rooms (list → pick room_id → get_room_info).
+  Future<String> _getRoomInfo(Map<String, dynamic> request) async {
+    final server = _serverArg(request);
+    final roomId = (request['room_id'] as String?)?.trim() ?? '';
+    if (roomId.isEmpty) return 'Error: room_id is required';
+    try {
+      final session = await registry.session(server);
+      final room = await SoliplexClient(session).getRoomInfo(roomId);
+      await _refreshAuthState();
+      return formatRoomInfo(server, roomId, room);
+    } catch (e) {
+      await _refreshAuthState();
+      return 'Error getting room info for "$roomId" on "$server": $e';
     }
   }
 
@@ -551,6 +604,27 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   /// response only carries `filename` + `url` per file (no size/mtime), so we
   /// list names; the URL is omitted from the text since it is an internal,
   /// auth-gated download link the agent should reach via soliplex_get_file.
+  /// Files live behind a room's `enable_attachments` flag. Returns an error
+  /// message to hand back to the caller when attachments are explicitly
+  /// disabled for [roomId], or null when files are available. Only blocks on an
+  /// explicit `false` — if the flag is absent or the room lookup fails, we let
+  /// the actual file operation surface its own error rather than over-blocking.
+  Future<String?> _attachmentsBlocked(
+      SoliplexServerSession session, String server, String roomId) async {
+    try {
+      final room = await SoliplexClient(session).getRoomInfo(roomId);
+      final raw = room['enable_attachments'] ?? room['enableAttachments'];
+      if (raw == false) {
+        return 'Error: files are not available in room "$roomId" on "$server" '
+            '— attachments are disabled for this room '
+            '(see soliplex_get_room_info).';
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String> _listFiles(Map<String, dynamic> request) async {
     final server = _serverArg(request);
     final roomId = (request['room_id'] as String?)?.trim() ?? '';
@@ -559,6 +633,11 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     final scope = threadId == null ? 'room "$roomId"' : 'thread "$threadId"';
     try {
       final session = await registry.session(server);
+      final blocked = await _attachmentsBlocked(session, server, roomId);
+      if (blocked != null) {
+        await _refreshAuthState();
+        return blocked;
+      }
       final files =
           await SoliplexClient(session).listFiles(roomId, threadId: threadId);
       await _refreshAuthState();
@@ -585,6 +664,11 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     final threadId = _threadArg(request);
     try {
       final session = await registry.session(server);
+      final blocked = await _attachmentsBlocked(session, server, roomId);
+      if (blocked != null) {
+        await _refreshAuthState();
+        return blocked;
+      }
       final file = await SoliplexClient(session)
           .getFile(roomId, filename, threadId: threadId);
       await _refreshAuthState();
@@ -633,6 +717,11 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     final scope = threadId == null ? 'room "$roomId"' : 'thread "$threadId"';
     try {
       final session = await registry.session(server);
+      final blocked = await _attachmentsBlocked(session, server, roomId);
+      if (blocked != null) {
+        await _refreshAuthState();
+        return blocked;
+      }
       await SoliplexClient(session).uploadFile(roomId, filename, bytes,
           threadId: threadId,
           contentType: (contentType == null || contentType.isEmpty)

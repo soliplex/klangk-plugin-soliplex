@@ -126,7 +126,8 @@ class SoliplexClient {
 
   Future<Never> _unauthenticated() async {
     await session.clearStoredTokens();
-    throw Exception('Not authenticated. Click "Connect to Soliplex" to log in.');
+    throw Exception(
+        'Not authenticated. Click "Connect to Soliplex" to log in.');
   }
 
   /// List all rooms the user has access to on this server.
@@ -151,6 +152,25 @@ class SoliplexClient {
       return data.cast<Map<String, dynamic>>();
     }
     return [];
+  }
+
+  /// Fetch one room's full info — name, description, welcome message, the
+  /// suggested prompts, and capability flags. Endpoint:
+  /// `GET /api/v1/rooms/{room_id}` (the single-room detail the server uses to
+  /// populate [sox.Room], including `suggestions`).
+  Future<Map<String, dynamic>> getRoomInfo(String roomId) async {
+    final response = await _http.get(
+      Uri.parse('$_baseUrl/api/v1/rooms/$roomId'),
+      headers: await session.headers(),
+    );
+    if (response.statusCode == 401) await _unauthenticated();
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to get room info: ${response.statusCode} ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    if (data is Map<String, dynamic>) return data;
+    throw Exception('Unexpected room info response: ${response.body}');
   }
 
   /// List the conversation threads in [roomId] so the agent can resume one via
@@ -254,8 +274,7 @@ class SoliplexClient {
     );
     if (response.statusCode == 401) await _unauthenticated();
     if (response.statusCode != 200) {
-      throw Exception(
-          'Failed to get file "$filename": '
+      throw Exception('Failed to get file "$filename": '
           '${response.statusCode} ${response.body}');
     }
     final contentType = response.headers['content-type'];
@@ -277,7 +296,11 @@ class SoliplexClient {
       }
       return (content: text, base64: false, contentType: contentType);
     } on FormatException {
-      return (content: base64Encode(bytes), base64: true, contentType: contentType);
+      return (
+        content: base64Encode(bytes),
+        base64: true,
+        contentType: contentType
+      );
     }
   }
 
