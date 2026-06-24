@@ -132,52 +132,80 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
+  print('[soliplex-auth] opened popup; loginUrl=$loginUrl');
+  print('[soliplex-auth] popup handle is null: ${popup == null} '
+      '(null = popup blocker)');
 
   final completer = Completer<SoliplexAuthResult>();
 
   final timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
+    // Reading popup.location.href throws a SecurityError while the popup is on
+    // the IdP/Soliplex (cross-origin) pages — that's expected, keep polling.
+    // Only same-origin reads (our /health callback) succeed. The try is
+    // narrowed to JUST that read so a later parse/store error can't be
+    // swallowed after we've already cancelled the timer + closed the popup
+    // (which would leave the completer forever uncompleted → 2-min timeout).
+    final String href;
     try {
       if (popup == null || popup.closed) {
         t.cancel();
         if (!completer.isCompleted) {
+          print('[soliplex-auth] popup closed before completing');
           completer.completeError(
               Exception('Auth popup was closed before completing'));
         }
         return;
       }
-      final href = popup.location.href;
-      if (href.contains('token=')) {
-        t.cancel();
-        popup.close();
-        final uri = Uri.parse(href);
-        final token = uri.queryParameters['token'];
-        final refreshToken = uri.queryParameters['refresh_token'];
-        final expiresIn = uri.queryParameters['expires_in'];
-        if (token == null || token.isEmpty) {
-          completer.completeError(Exception('No token in auth callback'));
-          return;
-        }
-        final expiresAt = expiresIn != null
-            ? DateTime.now().add(Duration(seconds: int.parse(expiresIn)))
-            : null;
-        store.writeTokens(
-          accessToken: token,
-          refreshToken: refreshToken,
-          expiresAt: expiresAt,
-        );
-        completer.complete(SoliplexAuthResult(
-          accessToken: token,
-          refreshToken: refreshToken,
-          expiresAt: expiresAt,
-        ));
-      }
+      href = popup.location.href;
     } catch (_) {
-      // Cross-origin access to popup.location throws — keep polling.
+      return; // cross-origin — keep polling
+    }
+
+    if (!href.contains('token=') || completer.isCompleted) return;
+    t.cancel();
+    print('[soliplex-auth] token detected in popup URL; completing');
+
+    final uri = Uri.parse(href);
+    final token = uri.queryParameters['token'];
+    final refreshToken = uri.queryParameters['refresh_token'];
+    final expiresIn = uri.queryParameters['expires_in'];
+    if (token == null || token.isEmpty) {
+      print('[soliplex-auth] ERROR: no token param (href=$href)');
+      completer.completeError(Exception('No token in auth callback'));
+      return;
+    }
+    // tryParse: a non-numeric expires_in must not throw and hang the completer.
+    final expiresAtSecs = int.tryParse(expiresIn ?? '');
+    final expiresAt = expiresAtSecs == null
+        ? null
+        : DateTime.now().add(Duration(seconds: expiresAtSecs));
+    try {
+      store.writeTokens(
+        accessToken: token,
+        refreshToken: refreshToken,
+        expiresAt: expiresAt,
+      );
+      print('[soliplex-auth] tokens stored; '
+          'expires_in=${expiresIn ?? "(none)"}');
+    } catch (e, st) {
+      print('[soliplex-auth] ERROR storing tokens: $e\n$st');
+    }
+    try {
+      popup.close();
+    } catch (_) {}
+    if (!completer.isCompleted) {
+      completer.complete(SoliplexAuthResult(
+        accessToken: token,
+        refreshToken: refreshToken,
+        expiresAt: expiresAt,
+      ));
     }
   });
 
   Future.delayed(const Duration(minutes: 2), () {
     if (!completer.isCompleted) {
+      print('[soliplex-auth] TIMEOUT after 2 min — token never reached '
+          'same-origin /health (or popup.location read always threw)');
       timer.cancel();
       try {
         popup?.close();
