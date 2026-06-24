@@ -108,49 +108,39 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   required Map<String, dynamic> systems,
   required SoliplexTokenStore store,
 }) async {
-  final systemData = systems[systemId] as Map<String, dynamic>?
-      ?? const <String, dynamic>{};
-  // Open the popup SYNCHRONOUSLY, before ANY await. Firefox expires "transient
-  // user activation" at the first await boundary, so a window.open() run after
-  // an await (this fn executes several awaits deep from the Connect tap)
-  // returns null there and the popup is silently blocked. Chrome keeps
-  // activation across awaits, which is why this worked on Chrome but failed on
-  // Firefox. Opening a blank popup NOW — within the gesture — keeps it alive;
-  // we set its location after computing the login URL. `popup=yes` + a real
-  // feature string marks it as a requested popup so it is not blocked even
-  // outside activation.
-  final popup = web.window
-      .open('about:blank', 'soliplex_auth', 'width=500,height=600,popup=yes');
-  print('[soliplex-auth] opened popup (blank); '
-      'handle is null: ${popup == null} (null = popup blocker)');
-
-  await store.writeProvider(
-    serverUrl: systemData['server_url'] as String?,
-    clientId: systemData['client_id'] as String?,
-  );
-
-  // Absolute callback on the Klangk app's OWN origin, pointing at the backend's
-  // static `${baseUrl}/health` endpoint (NOT a SPA hash route). A hash route
-  // (e.g. #/soliplex-auth-callback) loads the SPA, whose GoRouter has no such
-  // route and throws GoException + bounces to /login — navigating the popup
-  // away from the `?token=` the poller needs. /health returns a plain JSON body
-  // and just sits there, so the token query stays in popup.location.href,
-  // same-origin, for the poller to read. Soliplex's auth views (authn.py)
-  // pass `return_to` through verbatim with no allowlist/origin check — they
-  // only construct the OAuth `redirect_uri` as their OWN callback and nest
-  // return_to inside it — so no server-side allowlisting is needed.
+  // Compute the login URL synchronously (no awaits: soliplexUrl/systemId
+  // are params; baseUrl reads the <base> DOM tag synchronously) so we can
+  // open the popup directly to it.
   final callbackPath =
       Uri.encodeComponent('${web.window.location.origin}${baseUrl}/health');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
-  print('[soliplex-auth] navigating popup; loginUrl=$loginUrl');
+
+  // Open the popup DIRECTLY to the login URL — NOT about:blank + a later
+  // location.replace(). Navigating a popup cross-origin via location.replace
+  // SEVERS the opener's handle in Firefox: popup.location reads then throw
+  // SecurityError forever, even after the popup navigates back same-origin to
+  // /health, so the poller can never read the token (2-min timeout). Opening
+  // the real URL directly preserves the handle across the cross-origin IdP
+  // round trip — the poller reads token= once the popup returns. The feature
+  // string (width/height + popup=yes) marks it a 'requested popup', so Firefox
+  // permits it even though this runs several awaits deep from the Connect tap
+  // (verified: not blocked, handle stays readable, both Chrome + Firefox 150).
+  final popup = web.window
+      .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
+  print('[soliplex-auth] opened popup; loginUrl=$loginUrl; '
+      'handle is null: ${popup == null}');
   if (popup == null) {
-    // Popup was blocked. The gesture is gone, so surface a clear error rather
-    // than hanging until the 2-min timeout.
     throw Exception(
         'Auth popup was blocked by the browser. Allow popups for this site '
         'and try again.');
   }
-  popup.location.replace(loginUrl);
+
+  final systemData = systems[systemId] as Map<String, dynamic>?
+      ?? const <String, dynamic>{};
+  await store.writeProvider(
+    serverUrl: systemData['server_url'] as String?,
+    clientId: systemData['client_id'] as String?,
+  );
 
   final completer = Completer<SoliplexAuthResult>();
 
