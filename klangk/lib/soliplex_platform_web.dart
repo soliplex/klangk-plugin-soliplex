@@ -108,10 +108,22 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   required Map<String, dynamic> systems,
   required SoliplexTokenStore store,
 }) async {
-  final systemData = systems[systemId] as Map<String, dynamic>?;
-  if (systemData == null) {
-    throw Exception('Auth system "$systemId" not found');
-  }
+  final systemData = systems[systemId] as Map<String, dynamic>?
+      ?? const <String, dynamic>{};
+  // Open the popup SYNCHRONOUSLY, before ANY await. Firefox expires "transient
+  // user activation" at the first await boundary, so a window.open() run after
+  // an await (this fn executes several awaits deep from the Connect tap)
+  // returns null there and the popup is silently blocked. Chrome keeps
+  // activation across awaits, which is why this worked on Chrome but failed on
+  // Firefox. Opening a blank popup NOW — within the gesture — keeps it alive;
+  // we set its location after computing the login URL. `popup=yes` + a real
+  // feature string marks it as a requested popup so it is not blocked even
+  // outside activation.
+  final popup = web.window
+      .open('about:blank', 'soliplex_auth', 'width=500,height=600,popup=yes');
+  print('[soliplex-auth] opened popup (blank); '
+      'handle is null: ${popup == null} (null = popup blocker)');
+
   await store.writeProvider(
     serverUrl: systemData['server_url'] as String?,
     clientId: systemData['client_id'] as String?,
@@ -130,11 +142,15 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   final callbackPath =
       Uri.encodeComponent('${web.window.location.origin}${baseUrl}/health');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
-  final popup = web.window
-      .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
-  print('[soliplex-auth] opened popup; loginUrl=$loginUrl');
-  print('[soliplex-auth] popup handle is null: ${popup == null} '
-      '(null = popup blocker)');
+  print('[soliplex-auth] navigating popup; loginUrl=$loginUrl');
+  if (popup == null) {
+    // Popup was blocked. The gesture is gone, so surface a clear error rather
+    // than hanging until the 2-min timeout.
+    throw Exception(
+        'Auth popup was blocked by the browser. Allow popups for this site '
+        'and try again.');
+  }
+  popup.location.replace(loginUrl);
 
   final completer = Completer<SoliplexAuthResult>();
 
@@ -157,6 +173,11 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
         return;
       }
       href = popup.location.href;
+      // Logs only when the read SUCCEEDS — i.e. the popup is back on our
+      // origin. Its absence means popup.location reads are throwing every
+      // tick (cross-origin / isolated). Its presence shows the real URL the
+      // poller sees, token or not — the key diagnostic.
+      print('[soliplex-auth] same-origin read: $href');
     } catch (_) {
       return; // cross-origin — keep polling
     }
