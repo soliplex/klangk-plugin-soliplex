@@ -117,15 +117,18 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
     clientId: systemData['client_id'] as String?,
   );
 
-  // Absolute callback on the Klangk app's OWN origin. Klangk and the Soliplex
-  // server are separate origins, so a relative return_to (e.g.
-  // "/soliplex-auth-callback") resolves against the Soliplex domain — the token
-  // lands on the Soliplex frontend and never returns to this popup, and the
-  // cross-origin popup.location.href read below throws. Sending return_to to
-  // our origin makes the popup land here, same-origin, so the poller can read
-  // `token=`. NOTE: the Soliplex server must allow this return_to origin.
-  final callbackPath = Uri.encodeComponent(
-      '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
+  // Absolute callback on the Klangk app's OWN origin, pointing at the backend's
+  // static `${baseUrl}/health` endpoint (NOT a SPA hash route). A hash route
+  // (e.g. #/soliplex-auth-callback) loads the SPA, whose GoRouter has no such
+  // route and throws GoException + bounces to /login — navigating the popup
+  // away from the `?token=` the poller needs. /health returns a plain JSON body
+  // and just sits there, so the token query stays in popup.location.href,
+  // same-origin, for the poller to read. Soliplex's auth views (authn.py)
+  // pass `return_to` through verbatim with no allowlist/origin check — they
+  // only construct the OAuth `redirect_uri` as their OWN callback and nest
+  // return_to inside it — so no server-side allowlisting is needed.
+  final callbackPath =
+      Uri.encodeComponent('${web.window.location.origin}${baseUrl}/health');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
