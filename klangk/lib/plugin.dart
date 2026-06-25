@@ -1060,6 +1060,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                 (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
             return InkWell(
               onTap: () => setState(() => _selectedSystem = e.key),
+              mouseCursor: SystemMouseCursors.click,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
