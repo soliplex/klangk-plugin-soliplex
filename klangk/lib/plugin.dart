@@ -972,43 +972,48 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
     final scheme = Theme.of(context).colorScheme;
     final connected = _connected[s.name] ?? false;
     final isConnecting = _connectingServer == s.name;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.circle,
-                size: 10, color: connected ? Colors.green : scheme.outline),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(s.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-            ),
-            if (connected)
-              TextButton(
-                key: ValueKey('soliplex_logout_${s.name}'),
-                onPressed: () => _doLogout(s.name),
-                style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 28)),
-                child: const Text('Logout', style: TextStyle(fontSize: 12)),
-              )
-            else
-              TextButton(
-                key: ValueKey('soliplex_connect_${s.name}'),
-                onPressed: widget.plugin.loggingIn
-                    ? null
-                    : () => _startConnect(s.name),
-                style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 28)),
-                child: const Text('Connect', style: TextStyle(fontSize: 12)),
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.circle,
+                  size: 10, color: connected ? Colors.green : scheme.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(s.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurface)),
               ),
-          ],
-        ),
-        if (isConnecting) _connectPicker(scheme),
-      ],
+              if (connected)
+                TextButton(
+                  key: ValueKey('soliplex_logout_${s.name}'),
+                  onPressed: () => _doLogout(s.name),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 28)),
+                  child:
+                      const Text('Logout', style: TextStyle(fontSize: 12)),
+                )
+              else
+                TextButton(
+                  key: ValueKey('soliplex_connect_${s.name}'),
+                  onPressed: widget.plugin.loggingIn
+                      ? null
+                      : () => _startConnect(s.name),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 28)),
+                  child:
+                      const Text('Connect', style: TextStyle(fontSize: 12)),
+                ),
+            ],
+          ),
+          if (isConnecting) _connectPicker(scheme),
+        ],
+      ),
     );
   }
 
