@@ -7,6 +7,7 @@ import 'package:soliplex_client/soliplex_client.dart' as sox;
 
 import 'soliplex_auth_callback_page.dart';
 import 'soliplex_servers.dart';
+import 'soliplex_status_page.dart';
 import 'soliplex_tools.dart';
 
 const soliplexPluginVersion = '2026-06-04-native';
@@ -245,18 +246,18 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   Widget? buildOverlay(BuildContext context) => _overlay;
 
   @override
-  List<PluginRoute> get routes {
-    print('[SoliplexPlugin] routes getter called');
-    return [
-      PluginRoute(
-        path: '/soliplex-auth-callback',
-        builder: (context, pathParams, queryParams) {
-          print('[SoliplexPlugin] callback route builder called');
-          return SoliplexAuthCallbackPage(queryParameters: queryParams);
-        },
-      ),
-    ];
-  }
+  List<PluginRoute> get routes => [
+        PluginRoute(
+          path: '/soliplex-auth-callback',
+          builder: (context, pathParams, queryParams) =>
+              SoliplexAuthCallbackPage(queryParameters: queryParams),
+        ),
+        PluginRoute(
+          path: '/soliplex-status',
+          builder: (context, pathParams, queryParams) =>
+              SoliplexStatusPage(registry: registry),
+        ),
+      ];
 
   Future<void> login(String systemId,
       {String server = SoliplexServerRegistry.defaultName}) async {
