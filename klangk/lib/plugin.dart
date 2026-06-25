@@ -6,6 +6,7 @@ import 'package:soliplex_agent/soliplex_agent.dart' show ThreadKey;
 import 'package:soliplex_client/soliplex_client.dart' as sox;
 
 import 'soliplex_servers.dart';
+import 'soliplex_status_page.dart';
 import 'soliplex_tools.dart';
 
 const soliplexPluginVersion = '2026-06-04-native';
@@ -242,6 +243,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
 
   @override
   Widget? buildOverlay(BuildContext context) => _overlay;
+
+  @override
+  List<PluginRoute> get routes => [
+        PluginRoute(
+          path: '/soliplex-status',
+          builder: (context, pathParams, queryParams) =>
+              SoliplexStatusPage(registry: registry),
+        ),
+      ];
 
   Future<void> login(String systemId,
       {String server = SoliplexServerRegistry.defaultName}) async {
@@ -962,43 +972,48 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
     final scheme = Theme.of(context).colorScheme;
     final connected = _connected[s.name] ?? false;
     final isConnecting = _connectingServer == s.name;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.circle,
-                size: 10, color: connected ? Colors.green : scheme.outline),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(s.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-            ),
-            if (connected)
-              TextButton(
-                key: ValueKey('soliplex_logout_${s.name}'),
-                onPressed: () => _doLogout(s.name),
-                style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 28)),
-                child: const Text('Logout', style: TextStyle(fontSize: 12)),
-              )
-            else
-              TextButton(
-                key: ValueKey('soliplex_connect_${s.name}'),
-                onPressed: widget.plugin.loggingIn
-                    ? null
-                    : () => _startConnect(s.name),
-                style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 28)),
-                child: const Text('Connect', style: TextStyle(fontSize: 12)),
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.circle,
+                  size: 10, color: connected ? Colors.green : scheme.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(s.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurface)),
               ),
-          ],
-        ),
-        if (isConnecting) _connectPicker(scheme),
-      ],
+              if (connected)
+                TextButton(
+                  key: ValueKey('soliplex_logout_${s.name}'),
+                  onPressed: () => _doLogout(s.name),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 28)),
+                  child:
+                      const Text('Logout', style: TextStyle(fontSize: 12)),
+                )
+              else
+                TextButton(
+                  key: ValueKey('soliplex_connect_${s.name}'),
+                  onPressed: widget.plugin.loggingIn
+                      ? null
+                      : () => _startConnect(s.name),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 28)),
+                  child:
+                      const Text('Connect', style: TextStyle(fontSize: 12)),
+                ),
+            ],
+          ),
+          if (isConnecting) _connectPicker(scheme),
+        ],
+      ),
     );
   }
 
@@ -1050,6 +1065,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                 (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
             return InkWell(
               onTap: () => setState(() => _selectedSystem = e.key),
+              mouseCursor: SystemMouseCursors.click,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

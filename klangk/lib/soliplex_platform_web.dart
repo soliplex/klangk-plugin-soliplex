@@ -100,8 +100,17 @@ class SoliplexConfigStore {
 }
 
 /// Popup OIDC login. Must be called from a user gesture to avoid popup
-/// blockers. Opens `$soliplexUrl/api/login/$systemId?return_to=...`, polls the
-/// popup URL for the token query params once it redirects back to our origin.
+/// blockers. Opens `$soliplexUrl/api/login/$systemId?return_to=...` and polls
+/// the popup URL for the token query params once it redirects back to our
+/// origin.
+///
+/// The return_to points at the klangk backend's `/empty` endpoint — a
+/// plain-text page that returns an empty body. The `?token=` query params
+/// stay in the URL for the poller to read same-origin. This avoids loading
+/// the Flutter SPA in the popup (which is slow and has hash-routing
+/// complications). Works in Firefox because the final landing URL is
+/// same-origin — cross-origin SecurityErrors during the IdP hop are caught
+/// and the poller keeps going.
 Future<SoliplexAuthResult> soliplexInteractiveLogin({
   required String systemId,
   required String soliplexUrl,
@@ -117,24 +126,28 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
     clientId: systemData['client_id'] as String?,
   );
 
-  // Absolute callback on the Klangk app's OWN origin. Klangk and the Soliplex
-  // server are separate origins, so a relative return_to (e.g.
-  // "/soliplex-auth-callback") resolves against the Soliplex domain — the token
-  // lands on the Soliplex frontend and never returns to this popup, and the
-  // cross-origin popup.location.href read below throws. Sending return_to to
-  // our origin makes the popup land here, same-origin, so the poller can read
-  // `token=`. NOTE: the Soliplex server must allow this return_to origin.
-  final callbackPath = Uri.encodeComponent(
-      '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
+  // Point return_to at the klangk backend's /empty endpoint — a plain-text
+  // page that returns an empty body and just sits there, so ?token= stays
+  // in popup.location.href for the poller to read same-origin.
+  // Ensure baseUrl ends with / so the redirect doesn't hit a bare-path
+  // 301 that strips query params (e.g. /klangk -> /klangk/ drops ?token=).
+  final base = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
+  final callbackPath =
+      Uri.encodeComponent('${web.window.location.origin}${base}empty');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
+
+  if (popup == null) {
+    throw Exception(
+        'Popup blocked. Please allow popups for this site and try again.');
+  }
 
   final completer = Completer<SoliplexAuthResult>();
 
   final timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
     try {
-      if (popup == null || popup.closed) {
+      if (popup.closed) {
         t.cancel();
         if (!completer.isCompleted) {
           completer.completeError(
@@ -177,7 +190,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
     if (!completer.isCompleted) {
       timer.cancel();
       try {
-        popup?.close();
+        popup.close();
       } catch (_) {}
       completer
           .completeError(Exception('Auth popup timed out after 2 minutes'));
