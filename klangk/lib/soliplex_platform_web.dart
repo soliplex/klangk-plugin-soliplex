@@ -4,6 +4,7 @@
 // token store + popup OAuth login (the IdP dance is mediated by the Soliplex
 // backend, which redirects back to `return_to` with tokens in the query).
 import 'dart:async';
+import 'dart:js_interop';
 
 import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
 import 'package:web/web.dart' as web;
@@ -139,12 +140,15 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
 
   final completer = Completer<SoliplexAuthResult>();
 
-  // Listen for the postMessage from the callback page.
-  late final void Function(web.MessageEvent) onMessage;
-  onMessage = (web.MessageEvent event) {
+  // Listen for the postMessage from the callback page via EventListener.
+  // Use dart:js_interop to create the listener function so it works across
+  // Dart SDK versions (the `toJS` extension on plain functions is not
+  // available in Dart 3.11 / Flutter 3.41).
+  late final JSFunction jsListener;
+  void onMessage(web.MessageEvent event) {
     // Only accept messages from our own origin.
     if (event.origin != web.window.location.origin) return;
-    final data = (event.data?.toString()) ?? '';
+    final data = event.data?.dartify()?.toString() ?? '';
     if (!data.contains('soliplex-auth-callback')) return;
 
     // Parse the key=value pairs from the message.
@@ -152,7 +156,7 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
     final token = params['token'];
     if (token == null || token.isEmpty) return;
 
-    web.window.removeEventListener('message', onMessage.toJS);
+    web.window.removeEventListener('message', jsListener as web.EventListener);
 
     final refreshToken = params['refresh_token'];
     final expiresIn = params['expires_in'];
@@ -171,15 +175,21 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
       refreshToken: refreshToken,
       expiresAt: expiresAt,
     ));
-  };
-  web.window.addEventListener('message', onMessage.toJS);
+  }
+
+  // Wrap the Dart callback as a JS function via js_interop.
+  jsListener = ((JSAny? event) {
+    onMessage(event as web.MessageEvent);
+  }).toJS;
+  web.window.addEventListener('message', jsListener as web.EventListener);
 
   // Poll for popup closed (user manually closed it without completing).
   final closeTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
     if (popup.closed) {
       t.cancel();
       if (!completer.isCompleted) {
-        web.window.removeEventListener('message', onMessage.toJS);
+        web.window.removeEventListener(
+            'message', jsListener as web.EventListener);
         completer.completeError(
             Exception('Auth popup was closed before completing'));
       }
@@ -190,7 +200,8 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   Future.delayed(const Duration(minutes: 2), () {
     if (!completer.isCompleted) {
       closeTimer.cancel();
-      web.window.removeEventListener('message', onMessage.toJS);
+      web.window.removeEventListener(
+          'message', jsListener as web.EventListener);
       try {
         popup.close();
       } catch (_) {}

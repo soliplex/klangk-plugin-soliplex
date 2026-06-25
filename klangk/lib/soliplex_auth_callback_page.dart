@@ -1,3 +1,5 @@
+import 'dart:js_interop';
+
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 
@@ -40,8 +42,9 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
     // via postMessage. The opener's listener picks this up and stores
     // the tokens, then closes this popup.
     try {
-      final opener = web.window.opener;
-      if (opener != null) {
+      final openerRaw = web.window.opener;
+      if (openerRaw != null) {
+        final opener = openerRaw as web.Window;
         final message = {
           'type': 'soliplex-auth-callback',
           'token': token,
@@ -50,7 +53,7 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
         }.entries.map((e) => '${e.key}=${e.value}').join('&');
         opener.postMessage(
           message.toJS,
-          web.window.location.origin.toJS,
+          web.window.location.origin,
         );
         setState(() => _status = 'Authenticated. This window will close.');
         // Close after a short delay so the message is received
