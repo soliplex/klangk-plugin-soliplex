@@ -100,8 +100,14 @@ class SoliplexConfigStore {
 }
 
 /// Popup OIDC login. Must be called from a user gesture to avoid popup
-/// blockers. Opens `$soliplexUrl/api/login/$systemId?return_to=...`, polls the
-/// popup URL for the token query params once it redirects back to our origin.
+/// blockers. Opens `$soliplexUrl/api/login/$systemId?return_to=...` and
+/// receives the token back via postMessage from the callback page.
+///
+/// The callback page is a Flutter route (`/soliplex-auth-callback`) registered
+/// by [SoliplexPlugin.routes]. It reads `?token=` from its URL and posts it
+/// back to this window via `window.opener.postMessage(...)`. This works in
+/// Firefox where cross-origin navigation severs the popup opener handle,
+/// breaking the old polling-based approach.
 Future<SoliplexAuthResult> soliplexInteractiveLogin({
   required String systemId,
   required String soliplexUrl,
@@ -117,67 +123,76 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
     clientId: systemData['client_id'] as String?,
   );
 
-  // Absolute callback on the Klangk app's OWN origin. Klangk and the Soliplex
-  // server are separate origins, so a relative return_to (e.g.
-  // "/soliplex-auth-callback") resolves against the Soliplex domain — the token
-  // lands on the Soliplex frontend and never returns to this popup, and the
-  // cross-origin popup.location.href read below throws. Sending return_to to
-  // our origin makes the popup land here, same-origin, so the poller can read
-  // `token=`. NOTE: the Soliplex server must allow this return_to origin.
+  // Absolute callback on the Klangk app's OWN origin pointing at the Flutter
+  // route registered by SoliplexPlugin.routes. The callback page reads
+  // ?token= from its URL and posts it back via window.opener.postMessage().
   final callbackPath = Uri.encodeComponent(
       '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
 
+  if (popup == null) {
+    throw Exception(
+        'Popup blocked. Please allow popups for this site and try again.');
+  }
+
   final completer = Completer<SoliplexAuthResult>();
 
-  final timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
-    try {
-      if (popup == null || popup.closed) {
-        t.cancel();
-        if (!completer.isCompleted) {
-          completer.completeError(
-              Exception('Auth popup was closed before completing'));
-        }
-        return;
+  // Listen for the postMessage from the callback page.
+  late final void Function(web.MessageEvent) onMessage;
+  onMessage = (web.MessageEvent event) {
+    // Only accept messages from our own origin.
+    if (event.origin != web.window.location.origin) return;
+    final data = (event.data?.toString()) ?? '';
+    if (!data.contains('soliplex-auth-callback')) return;
+
+    // Parse the key=value pairs from the message.
+    final params = Uri.splitQueryString(data);
+    final token = params['token'];
+    if (token == null || token.isEmpty) return;
+
+    web.window.removeEventListener('message', onMessage.toJS);
+
+    final refreshToken = params['refresh_token'];
+    final expiresIn = params['expires_in'];
+    final expiresAt = (expiresIn != null && expiresIn.isNotEmpty)
+        ? DateTime.now().add(Duration(seconds: int.parse(expiresIn)))
+        : null;
+
+    store.writeTokens(
+      accessToken: token,
+      refreshToken: refreshToken,
+      expiresAt: expiresAt,
+    );
+
+    completer.complete(SoliplexAuthResult(
+      accessToken: token,
+      refreshToken: refreshToken,
+      expiresAt: expiresAt,
+    ));
+  };
+  web.window.addEventListener('message', onMessage.toJS);
+
+  // Poll for popup closed (user manually closed it without completing).
+  final closeTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
+    if (popup.closed) {
+      t.cancel();
+      if (!completer.isCompleted) {
+        web.window.removeEventListener('message', onMessage.toJS);
+        completer.completeError(
+            Exception('Auth popup was closed before completing'));
       }
-      final href = popup.location.href;
-      if (href.contains('token=')) {
-        t.cancel();
-        popup.close();
-        final uri = Uri.parse(href);
-        final token = uri.queryParameters['token'];
-        final refreshToken = uri.queryParameters['refresh_token'];
-        final expiresIn = uri.queryParameters['expires_in'];
-        if (token == null || token.isEmpty) {
-          completer.completeError(Exception('No token in auth callback'));
-          return;
-        }
-        final expiresAt = expiresIn != null
-            ? DateTime.now().add(Duration(seconds: int.parse(expiresIn)))
-            : null;
-        store.writeTokens(
-          accessToken: token,
-          refreshToken: refreshToken,
-          expiresAt: expiresAt,
-        );
-        completer.complete(SoliplexAuthResult(
-          accessToken: token,
-          refreshToken: refreshToken,
-          expiresAt: expiresAt,
-        ));
-      }
-    } catch (_) {
-      // Cross-origin access to popup.location throws — keep polling.
     }
   });
 
+  // Timeout after 2 minutes.
   Future.delayed(const Duration(minutes: 2), () {
     if (!completer.isCompleted) {
-      timer.cancel();
+      closeTimer.cancel();
+      web.window.removeEventListener('message', onMessage.toJS);
       try {
-        popup?.close();
+        popup.close();
       } catch (_) {}
       completer
           .completeError(Exception('Auth popup timed out after 2 minutes'));

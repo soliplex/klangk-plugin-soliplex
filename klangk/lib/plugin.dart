@@ -5,6 +5,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:soliplex_agent/soliplex_agent.dart' show ThreadKey;
 import 'package:soliplex_client/soliplex_client.dart' as sox;
 
+import 'soliplex_auth_callback_page.dart';
 import 'soliplex_servers.dart';
 import 'soliplex_tools.dart';
 
@@ -242,6 +243,15 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
 
   @override
   Widget? buildOverlay(BuildContext context) => _overlay;
+
+  @override
+  List<PluginRoute> get routes => [
+        PluginRoute(
+          path: '/soliplex-auth-callback',
+          builder: (context, pathParams, queryParams) =>
+              SoliplexAuthCallbackPage(queryParameters: queryParams),
+        ),
+      ];
 
   Future<void> login(String systemId,
       {String server = SoliplexServerRegistry.defaultName}) async {
