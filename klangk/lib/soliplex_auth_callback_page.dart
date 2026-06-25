@@ -53,7 +53,7 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
         }.entries.map((e) => '${e.key}=${e.value}').join('&');
         opener.postMessage(
           message.toJS,
-          web.window.location.origin,
+          web.window.location.origin.toJS,
         );
         setState(() => _status = 'Authenticated. This window will close.');
         // Close after a short delay so the message is received
