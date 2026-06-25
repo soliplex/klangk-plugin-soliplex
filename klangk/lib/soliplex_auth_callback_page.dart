@@ -32,7 +32,19 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
   }
 
   void _handleCallback() {
-    final token = widget.queryParameters['token'];
+    // The Soliplex backend appends ?token=... to the return_to URL. With hash
+    // routing the token lands in the PAGE query string (before the #), not in
+    // the hash fragment's query. GoRouter only sees the hash query, so we read
+    // from window.location.search directly.
+    final pageQuery = Uri.splitQueryString(
+      web.window.location.search.replaceFirst('?', ''),
+    );
+    // Fall back to GoRouter-provided params in case the server ever puts
+    // them in the hash fragment instead.
+    String? param(String key) =>
+        pageQuery[key] ?? widget.queryParameters[key];
+
+    final token = param('token');
     if (token == null || token.isEmpty) {
       setState(() => _status = 'No token received.');
       return;
@@ -48,8 +60,8 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
         final message = {
           'type': 'soliplex-auth-callback',
           'token': token,
-          'refresh_token': widget.queryParameters['refresh_token'] ?? '',
-          'expires_in': widget.queryParameters['expires_in'] ?? '',
+          'refresh_token': param('refresh_token') ?? '',
+          'expires_in': param('expires_in') ?? '',
         }.entries.map((e) => '${e.key}=${e.value}').join('&');
         opener.postMessage(
           message.toJS,
