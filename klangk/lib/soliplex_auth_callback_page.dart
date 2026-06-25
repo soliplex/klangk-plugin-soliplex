@@ -28,6 +28,12 @@ class _SoliplexAuthCallbackPageState extends State<SoliplexAuthCallbackPage> {
   @override
   void initState() {
     super.initState();
+    // Log to browser console so we can verify this route was reached.
+    web.console.log('[SoliplexAuthCallback] page loaded'.toJS);
+    web.console.log(
+        '[SoliplexAuthCallback] search=${web.window.location.search}'.toJS);
+    web.console.log(
+        '[SoliplexAuthCallback] hash=${web.window.location.hash}'.toJS);
     _handleCallback();
   }
 

@@ -245,13 +245,18 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   Widget? buildOverlay(BuildContext context) => _overlay;
 
   @override
-  List<PluginRoute> get routes => [
-        PluginRoute(
-          path: '/soliplex-auth-callback',
-          builder: (context, pathParams, queryParams) =>
-              SoliplexAuthCallbackPage(queryParameters: queryParams),
-        ),
-      ];
+  List<PluginRoute> get routes {
+    print('[SoliplexPlugin] routes getter called');
+    return [
+      PluginRoute(
+        path: '/soliplex-auth-callback',
+        builder: (context, pathParams, queryParams) {
+          print('[SoliplexPlugin] callback route builder called');
+          return SoliplexAuthCallbackPage(queryParameters: queryParams);
+        },
+      ),
+    ];
+  }
 
   Future<void> login(String systemId,
       {String server = SoliplexServerRegistry.defaultName}) async {
