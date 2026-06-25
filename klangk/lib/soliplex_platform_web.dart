@@ -127,8 +127,11 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   // Absolute callback on the Klangk app's OWN origin pointing at the Flutter
   // route registered by SoliplexPlugin.routes. The callback page reads
   // ?token= from its URL and posts it back via window.opener.postMessage().
+  // Ensure baseUrl ends with / so the redirect doesn't hit a bare-path
+  // 301 that strips query params (e.g. /klangk -> /klangk/ drops ?token=).
+  final base = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
   final callbackPath = Uri.encodeComponent(
-      '${web.window.location.origin}${baseUrl}#/soliplex-auth-callback');
+      '${web.window.location.origin}$base#/soliplex-auth-callback');
   final loginUrl = '$soliplexUrl/api/login/$systemId?return_to=$callbackPath';
   final popup = web.window
       .open(loginUrl, 'soliplex_auth', 'width=500,height=600,popup=yes');
