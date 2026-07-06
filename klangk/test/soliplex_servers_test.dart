@@ -322,6 +322,26 @@ void main() {
           throwsA(isA<Exception>()));
     });
 
+    test('two servers have independent token lifetimes', () async {
+      // Server "alpha" has a valid token; server "beta" has an expired one.
+      SharedPreferences.setMockInitialValues({
+        'soliplex_alpha_access_token': 'tok-a',
+        'soliplex_alpha_expires_at':
+            DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+        'soliplex_beta_access_token': 'tok-b',
+        'soliplex_beta_expires_at':
+            DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
+      });
+      final alpha = session(MockClient((req) async => _json({})), name: 'alpha');
+      final beta = session(MockClient((req) async => _json({})), name: 'beta');
+      expect(await alpha.hasValidToken(), isTrue);
+      expect(await beta.hasValidToken(), isFalse);
+      // Clearing alpha does not affect beta's (expired) state.
+      await alpha.clearStoredTokens();
+      expect(await alpha.hasValidToken(), isFalse);
+      expect(await beta.hasValidToken(), isFalse);
+    });
+
     test('clearStoredTokens wipes this server\'s namespaced keys', () async {
       SharedPreferences.setMockInitialValues({
         'soliplex_default_access_token': 'tok',
