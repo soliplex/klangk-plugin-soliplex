@@ -12,6 +12,11 @@ pubspec.lock
 .vscode/
 *.iml
 
+# devenv
+.devenv/
+.devenv.flake.nix
+devenv.lock
+
 # OS
 .DS_Store
 node_modules/

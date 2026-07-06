@@ -149,6 +149,83 @@ void main() {
     expect(find.byType(SelectionArea), findsOneWidget);
   });
 
+  testWidgets('close button (X) collapses the expanded overlay',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    // Expand.
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Soliplex servers'), findsOneWidget);
+    // Close via the X button.
+    await tester.tap(find.byKey(const ValueKey('soliplex_overlay_close')));
+    await tester.pumpAndSettle();
+    // Expanded panel is gone; only the collapsed icon remains.
+    expect(find.text('Soliplex servers'), findsNothing);
+    expect(find.byKey(_iconKey), findsOneWidget);
+  });
+
+  testWidgets('logout flips a connected server back to Connect',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'soliplex_default_access_token': 'tok',
+      'soliplex_default_expires_at':
+          DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+    });
+    await pumpOverlay(tester, _plugin());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    // Should show Logout initially.
+    expect(
+        find.byKey(const ValueKey('soliplex_logout_default')), findsOneWidget);
+    // Tap Logout.
+    await tester.tap(find.byKey(const ValueKey('soliplex_logout_default')));
+    await tester.pumpAndSettle();
+    // Now should show Connect instead.
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_default')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('soliplex_logout_default')), findsNothing);
+  });
+
+  testWidgets('add-server form shows validation error for reserved name',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_toggle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_name')), 'default');
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_url')), 'https://x');
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
+    await tester.pumpAndSettle();
+    // The form should show the "reserved" error inline.
+    expect(find.textContaining('reserved'), findsOneWidget);
+  });
+
+  testWidgets('add-server form clears after successful add', (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_toggle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_name')), 'staging');
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_url')), 'https://staging');
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
+    await tester.pumpAndSettle();
+    // Form should be gone (replaced by the "Add server" toggle).
+    expect(find.byKey(const ValueKey('soliplex_add_toggle')), findsOneWidget);
+    // The new server row should appear.
+    expect(find.text('staging'), findsOneWidget);
+  });
+
   testWidgets('real fetch failure (non-200 /api/login) shows the error',
       (tester) async {
     final plugin = SoliplexPlugin(

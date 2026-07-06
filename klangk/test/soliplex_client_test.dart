@@ -60,6 +60,15 @@ void main() {
     });
   });
 
+  group('SoliplexClient.listRooms network errors', () {
+    test('SocketException (unreachable server) propagates as thrown exception',
+        () async {
+      final c = clientWith(
+          MockClient((req) async => throw Exception('Connection refused')));
+      expect(c.listRooms(), throwsA(isA<Exception>()));
+    });
+  });
+
   group('SoliplexClient.listThreads', () {
     test('parses {threads:[...]} from /rooms/{room}/agui', () async {
       final c = clientWith(MockClient((req) async {

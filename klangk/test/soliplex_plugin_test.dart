@@ -570,6 +570,137 @@ void main() {
     });
   });
 
+  group('soliplex_query non-streaming fallback (onChunk=null)', () {
+    test('handlers["soliplex_query"] invokes the non-streaming path', () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        // Thread creation: returns no runs so it fails before _streamRun.
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }));
+      // The non-streaming handler passes onChunk=null to _runQuery, so the
+      // error comes from queryRoom (no run) — NOT from a streaming transport.
+      final out = await plugin.handlers['soliplex_query']!(
+          {'room_id': 'search', 'question': 'hello'});
+      expect(out, contains('Error querying Soliplex'));
+      expect(out, contains('No run'));
+    });
+
+    test('streamingHandlers["soliplex_query"] relays chunks via onChunk',
+        () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        // Fail at thread creation so we never reach the live SSE.
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }));
+      final chunks = <String>[];
+      final out = await plugin.streamingHandlers['soliplex_query']!(
+          {'room_id': 'search', 'question': 'hello'}, chunks.add);
+      // Even when the query fails, the streaming handler returns the same
+      // error string as the non-streaming path.
+      expect(out, contains('Error querying Soliplex'));
+    });
+  });
+
+  group('soliplex_list_rooms failure modes', () {
+    test('network error (exception from http client) surfaces clearly',
+        () async {
+      final plugin = SoliplexPlugin(
+          registry: SoliplexServerRegistry(
+              httpClient: MockClient(
+                  (req) async => throw Exception('Connection refused'))));
+      final out = await plugin.handlers['soliplex_list_rooms']!({});
+      expect(out, contains('Error listing rooms'));
+      expect(out, contains('Connection refused'));
+    });
+  });
+
+  group('soliplex_query_all fan-out edge cases', () {
+    test('network exception on one target becomes a per-target error', () async {
+      // "default" works (returns no-runs error); "bad" throws from the http
+      // client itself, simulating a network timeout / connection refused.
+      var callCount = 0;
+      final reg = SoliplexServerRegistry(httpClient: MockClient((req) async {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.host == 'bad') {
+          throw Exception('Connection timed out');
+        }
+        callCount++;
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }));
+      await reg.addServer('bad', 'https://bad');
+      final plugin = SoliplexPlugin(registry: reg);
+      final out = await plugin.handlers['soliplex_query_all']!({
+        'question': 'q',
+        'targets': [
+          {'room': 'search'}, // default -> no-runs error
+          {'server': 'bad', 'room': 'kb'}, // bad -> network exception
+        ]
+      });
+      // Both targets appear as per-target errors, not a batch-level throw.
+      expect(out, contains('## default/search\nError:'));
+      expect(out, contains('## bad/kb\nError:'));
+      expect(out, contains('Connection timed out'));
+      expect(callCount, 1); // default's agui POST did fire
+    });
+
+    test('malformed (non-JSON) response on one target becomes per-target error',
+        () async {
+      final reg = SoliplexServerRegistry(httpClient: MockClient((req) async {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.host == 'garbled') {
+          return http.Response('not json at all {{{', 200,
+              headers: {'content-type': 'application/json'});
+        }
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }));
+      await reg.addServer('garbled', 'https://garbled');
+      final plugin = SoliplexPlugin(registry: reg);
+      final out = await plugin.handlers['soliplex_query_all']!({
+        'question': 'q',
+        'targets': [
+          {'server': 'garbled', 'room': 'kb'},
+        ]
+      });
+      expect(out, contains('## garbled/kb\nError:'));
+    });
+
+    test('keepalive empty chunks are emitted during streaming fan-out',
+        () async {
+      final plugin = SoliplexPlugin(registry: registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms')) {
+          return _json({
+            'a': {'name': 'A'},
+            'b': {'name': 'B'},
+          });
+        }
+        // Each target's agui POST returns no-runs → fails fast.
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }));
+      final chunks = <String>[];
+      await plugin.streamingHandlers['soliplex_query_all']!({
+        'question': 'q',
+        'targets': [
+          {'room': '*'}
+        ]
+      }, chunks.add);
+      // At minimum: 1 initial keepalive + 1 per finished target (2 targets
+      // from wildcard expansion). All are empty strings.
+      expect(chunks.length, greaterThanOrEqualTo(3));
+      expect(chunks.every((c) => c.isEmpty), isTrue);
+    });
+  });
+
   // The pure aggregator: tests the happy-path formatting (label + the answer's
   // own Sources block + a continuation thread_id) and a mixed success/failure
   // batch, WITHOUT the live SSE. This is the boundary the handler can't reach
