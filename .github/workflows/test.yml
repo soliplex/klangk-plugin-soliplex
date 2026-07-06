@@ -20,7 +20,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: klangk
+        # Skip Git LFS smudge: transitive deps (ag-ui) use LFS for test
+        # fixtures we don't need; the smudge filter fails in CI without
+        # LFS credentials for that repo.
         run: flutter pub get
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
 
       - name: Run tests
         working-directory: klangk
