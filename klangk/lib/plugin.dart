@@ -951,38 +951,36 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           elevation: 4,
           borderRadius: BorderRadius.circular(8),
           color: scheme.surface,
-          child: SelectionArea(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.hub, size: 16, color: scheme.onSurface),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text('Soliplex servers',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: scheme.onSurface)),
-                      ),
-                      InkWell(
-                        key: const ValueKey('soliplex_overlay_close'),
-                        onTap: _toggleExpand,
-                        child: Icon(Icons.close,
-                            size: 16, color: scheme.onSurface),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ..._servers.map(_serverRow),
-                  const Divider(height: 16),
-                  if (_showAdd) _addForm(scheme) else _addToggle(scheme),
-                ],
-              ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.hub, size: 16, color: scheme.onSurface),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text('Soliplex servers',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: scheme.onSurface)),
+                    ),
+                    InkWell(
+                      key: const ValueKey('soliplex_overlay_close'),
+                      onTap: _toggleExpand,
+                      child: Icon(Icons.close,
+                          size: 16, color: scheme.onSurface),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ..._servers.map(_serverRow),
+                const Divider(height: 16),
+                if (_showAdd) _addForm(scheme) else _addToggle(scheme),
+              ],
             ),
           ),
         ),

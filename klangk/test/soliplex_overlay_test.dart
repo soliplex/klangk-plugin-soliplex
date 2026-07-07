@@ -158,14 +158,15 @@ void main() {
         find.byKey(const ValueKey('soliplex_logout_default')), findsOneWidget);
   });
 
-  testWidgets('expanded overlay wraps its content in a SelectionArea',
+  testWidgets('expanded overlay does not use a SelectionArea',
       (tester) async {
     await pumpOverlay(tester, _plugin());
     await tester.pump();
     await tester.tap(find.byKey(_iconKey));
     await tester.pumpAndSettle();
-    // All overlay text (server names, providers, errors) is selectable.
-    expect(find.byType(SelectionArea), findsOneWidget);
+    // No SelectionArea — the overlay is interactive, not a text-reading area.
+    // A SelectionArea causes a text-select cursor on all interactive elements.
+    expect(find.byType(SelectionArea), findsNothing);
   });
 
   testWidgets('close button (X) collapses the expanded overlay',
