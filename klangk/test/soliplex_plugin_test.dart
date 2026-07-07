@@ -234,6 +234,57 @@ void main() {
     });
   });
 
+  group('removeServerFromUi', () {
+    test('logs out of a connected server before removing it', () async {
+      SharedPreferences.setMockInitialValues({
+        'soliplex_staging_access_token': 'tok',
+        'soliplex_staging_expires_at':
+            DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+      });
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({});
+      });
+      await reg.addServer('staging', 'https://staging');
+      final plugin = SoliplexPlugin(registry: reg);
+
+      // Staging starts connected.
+      expect(await plugin.isServerConnected('staging'), isTrue);
+
+      // Remove it — should log out first.
+      final err = await plugin.removeServerFromUi('staging');
+      expect(err, isNull);
+
+      // Server should be gone from the list.
+      final servers = await plugin.listServers();
+      expect(servers.map((s) => s.name), isNot(contains('staging')));
+    });
+
+    test('removing a server that is not logged in does not throw', () async {
+      SharedPreferences.setMockInitialValues({});
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({});
+      });
+      await reg.addServer('staging', 'https://staging');
+      final plugin = SoliplexPlugin(registry: reg);
+
+      // Staging is not connected.
+      expect(await plugin.isServerConnected('staging'), isFalse);
+
+      // Remove should succeed without error.
+      final err = await plugin.removeServerFromUi('staging');
+      expect(err, isNull);
+
+      final servers = await plugin.listServers();
+      expect(servers.map((s) => s.name), isNot(contains('staging')));
+    });
+  });
+
   group('single-server enforcement', () {
     test('connecting to an open server disconnects other connected servers',
         () async {

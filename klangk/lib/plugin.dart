@@ -225,6 +225,26 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     }
   }
 
+  /// Remove a user-added server from the overlay UI. Returns null on success
+  /// or an error message. The bundled `default` server cannot be removed.
+  Future<String?> removeServerFromUi(String name) async {
+    final n = name.trim();
+    if (n.isEmpty) return 'Name is required';
+    if (n == SoliplexServerRegistry.defaultName) {
+      return '"${SoliplexServerRegistry.defaultName}" cannot be removed';
+    }
+    try {
+      await registry.ensureDefault();
+      if (!registry.names.contains(n)) return 'Server "$n" not found';
+      await logout(server: n);
+      await registry.removeServer(n);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return '$e';
+    }
+  }
+
   bool get authenticated => _authenticated;
   bool get loggingIn => _loggingIn;
 
@@ -794,6 +814,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   bool _authError =
       false; // true only on a real fetch failure (non-200/network)
 
+  // Remove confirmation: tracks which server name is pending removal.
+  String? _confirmingRemove;
+
   // Add-server form.
   bool _showAdd = false;
   final TextEditingController _nameCtrl = TextEditingController();
@@ -888,6 +911,11 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
 
   Future<void> _doLogout(String server) async {
     await widget.plugin.logout(server: server);
+    await _refreshServers();
+  }
+
+  Future<void> _doRemoveServer(String server) async {
+    await widget.plugin.removeServerFromUi(server);
     await _refreshServers();
   }
 
@@ -1001,6 +1029,34 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         children: [
           Row(
             children: [
+              // Remove button (X) or equal-width spacer so names align.
+              if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
+                if (_confirmingRemove == s.name)
+                  TextButton(
+                    key: ValueKey('soliplex_remove_confirm_${s.name}'),
+                    onPressed: () {
+                      _confirmingRemove = null;
+                      _doRemoveServer(s.name);
+                    },
+                    style: TextButton.styleFrom(
+                        foregroundColor: scheme.error,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28)),
+                    child:
+                        const Text('Remove?', style: TextStyle(fontSize: 12)),
+                  )
+                else
+                  InkWell(
+                    key: ValueKey('soliplex_remove_${s.name}'),
+                    onTap: () => setState(() => _confirmingRemove = s.name),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.close,
+                          size: 14, color: scheme.onSurfaceVariant),
+                    ),
+                  )
+              else
+                const SizedBox(width: 18),
               Icon(Icons.circle,
                   size: 10, color: connected ? Colors.green : scheme.outline),
               const SizedBox(width: 6),
