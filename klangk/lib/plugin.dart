@@ -1029,6 +1029,33 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         children: [
           Row(
             children: [
+              // Remove button (X) before the dot for non-default servers,
+              // so it doesn't push Logout/Connect out of alignment.
+              if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
+                if (_confirmingRemove == s.name)
+                  TextButton(
+                    key: ValueKey('soliplex_remove_confirm_${s.name}'),
+                    onPressed: () {
+                      _confirmingRemove = null;
+                      _doRemoveServer(s.name);
+                    },
+                    style: TextButton.styleFrom(
+                        foregroundColor: scheme.error,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28)),
+                    child:
+                        const Text('Remove?', style: TextStyle(fontSize: 12)),
+                  )
+                else
+                  InkWell(
+                    key: ValueKey('soliplex_remove_${s.name}'),
+                    onTap: () => setState(() => _confirmingRemove = s.name),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.close,
+                          size: 14, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
               Icon(Icons.circle,
                   size: 10, color: connected ? Colors.green : scheme.outline),
               const SizedBox(width: 6),
@@ -1059,31 +1086,6 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                   child:
                       const Text('Connect', style: TextStyle(fontSize: 12)),
                 ),
-              if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
-                if (_confirmingRemove == s.name)
-                  TextButton(
-                    key: ValueKey('soliplex_remove_confirm_${s.name}'),
-                    onPressed: () {
-                      _confirmingRemove = null;
-                      _doRemoveServer(s.name);
-                    },
-                    style: TextButton.styleFrom(
-                        foregroundColor: scheme.error,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 28)),
-                    child:
-                        const Text('Remove?', style: TextStyle(fontSize: 12)),
-                  )
-                else
-                  InkWell(
-                    key: ValueKey('soliplex_remove_${s.name}'),
-                    onTap: () => setState(() => _confirmingRemove = s.name),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(Icons.close,
-                          size: 14, color: scheme.onSurfaceVariant),
-                    ),
-                  ),
             ],
           ),
           if (isConnecting) _connectPicker(scheme),
