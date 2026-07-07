@@ -22,6 +22,7 @@ const EMAIL = process.env.KLANGK_EMAIL;
 const PASSWORD = process.env.KLANGK_PASSWORD;
 const WS_NAME = process.env.KLANGK_WORKSPACE || `cursor-pw-${Date.now()}`;
 const USE_FIREFOX = process.env.BROWSER === "firefox";
+const USE_HEADED = process.env.HEADED === "1";
 const SCREENSHOTS = new URL(".", import.meta.url).pathname;
 const WIDTH = 1280;
 const HEIGHT = 800;
@@ -90,33 +91,41 @@ async function screenshot(page, name) {
 // elements inside its shadow DOM.
 async function getCursor(page) {
   return page.evaluate(() => {
-    // Check flutter-view element
     const fv = document.querySelector("flutter-view");
     if (!fv) return { error: "no flutter-view" };
 
+    // Computed styles
     const fvCursor = getComputedStyle(fv).cursor;
+    const bodyCursor = getComputedStyle(document.body).cursor;
 
-    // Check shadow DOM elements
+    // Inline styles (Flutter Web sets cursor via inline style on body)
+    const bodyInline = document.body.style.cursor || "(none)";
+    const fvInline = fv.style.cursor || "(none)";
+
+    // Check shadow DOM
     const shadow = fv.shadowRoot;
-    let glassPaneCursor = null;
-    let hostCursor = null;
+    let shadowCursors = [];
     if (shadow) {
-      const glassPane = shadow.querySelector("flt-glass-pane");
-      if (glassPane) glassPaneCursor = getComputedStyle(glassPane).cursor;
-      // Also check the host element and any platform views
       for (const el of shadow.querySelectorAll("*")) {
-        const c = getComputedStyle(el).cursor;
-        if (c === "text") {
-          hostCursor = `text (on ${el.tagName.toLowerCase()})`;
-          break;
+        const inline = el.style.cursor;
+        const computed = getComputedStyle(el).cursor;
+        if (inline || computed === "text") {
+          shadowCursors.push(
+            `${el.tagName.toLowerCase()}` +
+              (el.id ? `#${el.id}` : "") +
+              `: inline=${inline || "(none)"} computed=${computed}`,
+          );
         }
       }
     }
 
-    // Also check body
-    const bodyCursor = getComputedStyle(document.body).cursor;
-
-    return { fvCursor, glassPaneCursor, hostCursor, bodyCursor };
+    return {
+      fvCursor,
+      fvInline,
+      bodyCursor,
+      bodyInline,
+      shadowCursors: shadowCursors.length ? shadowCursors : ["(none)"],
+    };
   });
 }
 
@@ -167,9 +176,14 @@ const xvfb = USE_FIREFOX ? startXvfb() : null;
 
 try {
   const launcher = USE_FIREFOX ? firefox : chromium;
+  const executablePath =
+    process.env.CHROME_PATH ||
+    process.env.FIREFOX_PATH ||
+    undefined;
+  const headless = USE_FIREFOX ? false : !USE_HEADED;
   const launchOpts = USE_FIREFOX
-    ? { headless: false, env: { ...process.env, DISPLAY } }
-    : { headless: true };
+    ? { headless: false, executablePath, env: { ...process.env, DISPLAY } }
+    : { headless: headless, executablePath };
   console.log(`Browser: ${USE_FIREFOX ? "Firefox" : "Chromium"}`);
   const browser = await launcher.launch(launchOpts);
   const context = await browser.newContext({
@@ -313,6 +327,35 @@ try {
   console.log('"Soliplex servers":', JSON.stringify(headerCursor));
   await screenshot(page, "cursor-06-hover-header.png");
 
+  // Try dispatching a real DOM mousemove event to see if Flutter's
+  // CanvasKit cursor handler responds differently
+  console.log("\n--- DOM mousemove dispatch ---");
+  const domCursor = await page.evaluate(async ({ x, y }) => {
+    const fv = document.querySelector("flutter-view");
+    const shadow = fv?.shadowRoot;
+    // Find the canvas or glass-pane in shadow DOM
+    const target = shadow?.querySelector("flt-glass-pane") || fv;
+    if (target) {
+      target.dispatchEvent(
+        new MouseEvent("mousemove", {
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+    // Give Flutter a frame to respond
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 100)));
+    return {
+      body: document.body.style.cursor || "(none)",
+      bodyComputed: getComputedStyle(document.body).cursor,
+      fv: fv?.style.cursor || "(none)",
+      fvComputed: getComputedStyle(fv).cursor,
+    };
+  }, { x: fvX + overlayX, y: fvY + 95 });
+  console.log("After DOM mousemove on 'default':", JSON.stringify(domCursor));
+
   // Move away and back to check if cursor updates
   console.log("\n--- Move away and back ---");
   await page.mouse.move(fvX + 100, fvY + 400);
@@ -338,14 +381,22 @@ try {
   let hasTextCursor = false;
   for (const { label, cursor } of allCursors) {
     const fvC = cursor.fvCursor || "?";
-    const gpC = cursor.glassPaneCursor || "?";
     const bodyC = cursor.bodyCursor || "?";
-    const hostC = cursor.hostCursor || "none";
+    const bodyI = cursor.bodyInline || "?";
+    const fvI = cursor.fvInline || "?";
+    const shadowC = (cursor.shadowCursors || []).join("; ");
     const bad =
-      fvC === "text" || gpC === "text" || bodyC === "text" || hostC.includes("text");
+      fvC === "text" || bodyC === "text" || bodyI === "text" || fvI === "text" ||
+      shadowC.includes("text");
     if (bad) hasTextCursor = true;
     console.log(
-      `  ${bad ? "FAIL" : "OK  "} ${label}: fv=${fvC} glass=${gpC} body=${bodyC} host=${hostC}`,
+      `  ${bad ? "FAIL" : "OK  "} ${label}:`,
+    );
+    console.log(
+      `        fv=${fvC} fv-inline=${fvI} body=${bodyC} body-inline=${bodyI}`,
+    );
+    console.log(
+      `        shadow: ${shadowC}`,
     );
   }
 
