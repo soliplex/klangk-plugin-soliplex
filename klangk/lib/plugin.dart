@@ -158,6 +158,24 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     }
   }
 
+  /// Disconnect every server OTHER than [keepServer]. Enforces the
+  /// single-server invariant: only one server may be connected at a time.
+  Future<void> _disconnectOtherServers(String keepServer) async {
+    try {
+      await registry.ensureDefault();
+      for (final s in registry.servers) {
+        if (s.name == keepServer) continue;
+        final session = await registry.session(s.name);
+        if (await session.isConnected()) {
+          await session.clearStoredTokens();
+        }
+      }
+    } catch (_) {
+      // Best-effort: if we can't check/disconnect others, proceed with the
+      // login attempt anyway.
+    }
+  }
+
   /// Configured servers (ensures `default` is loaded first). For the overlay.
   Future<List<SoliplexServer>> listServers() async {
     await registry.ensureDefault();
@@ -177,7 +195,9 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   /// Mark an open (no-auth) [server] as connected. It needs no login but is
   /// usable immediately, so the overlay treats it like a logged-in server
   /// (green icon/dot). Best-effort: the server still works without the flag.
+  /// Enforces single-server: disconnects any other connected server first.
   Future<void> markServerOpenConnected(String server) async {
+    await _disconnectOtherServers(server);
     try {
       await (await registry.session(server)).markOpenConnected();
     } catch (_) {
@@ -259,6 +279,8 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     _loginError = null;
     notifyListeners();
     try {
+      // Enforce single-server: disconnect any other connected server first.
+      await _disconnectOtherServers(server);
       await (await registry.session(server)).login(systemId);
     } catch (e) {
       _loginError = e.toString();
