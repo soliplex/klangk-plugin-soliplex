@@ -123,7 +123,8 @@ void main() {
         find.byKey(const ValueKey('soliplex_remove_staging')), findsOneWidget);
   });
 
-  testWidgets('tapping remove button removes the server row', (tester) async {
+  testWidgets('remove requires confirmation tap before deleting',
+      (tester) async {
     await pumpOverlay(tester, _plugin());
     await tester.pump();
     await tester.tap(find.byKey(_iconKey));
@@ -138,14 +139,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
     await tester.pumpAndSettle();
     expect(find.text('staging'), findsOneWidget);
-    // Remove it.
+    // First tap: shows "Remove?" confirmation.
     await tester.tap(find.byKey(const ValueKey('soliplex_remove_staging')));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove?'), findsOneWidget);
+    expect(find.text('staging'), findsOneWidget); // still there
+    // Second tap: confirms removal.
+    await tester
+        .tap(find.byKey(const ValueKey('soliplex_remove_confirm_staging')));
     await tester.pumpAndSettle();
     // Server row should be gone.
     expect(find.text('staging'), findsNothing);
-    expect(
-        find.byKey(const ValueKey('soliplex_remove_staging')), findsNothing);
-    // Default should still be there.
     expect(find.text('default'), findsOneWidget);
   });
 

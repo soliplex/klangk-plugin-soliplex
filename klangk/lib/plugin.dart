@@ -814,6 +814,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   bool _authError =
       false; // true only on a real fetch failure (non-200/network)
 
+  // Remove confirmation: tracks which server name is pending removal.
+  String? _confirmingRemove;
+
   // Add-server form.
   bool _showAdd = false;
   final TextEditingController _nameCtrl = TextEditingController();
@@ -1057,15 +1060,30 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                       const Text('Connect', style: TextStyle(fontSize: 12)),
                 ),
               if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
-                InkWell(
-                  key: ValueKey('soliplex_remove_${s.name}'),
-                  onTap: () => _doRemoveServer(s.name),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.close,
-                        size: 14, color: scheme.onSurfaceVariant),
+                if (_confirmingRemove == s.name)
+                  TextButton(
+                    key: ValueKey('soliplex_remove_confirm_${s.name}'),
+                    onPressed: () {
+                      _confirmingRemove = null;
+                      _doRemoveServer(s.name);
+                    },
+                    style: TextButton.styleFrom(
+                        foregroundColor: scheme.error,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28)),
+                    child:
+                        const Text('Remove?', style: TextStyle(fontSize: 12)),
+                  )
+                else
+                  InkWell(
+                    key: ValueKey('soliplex_remove_${s.name}'),
+                    onTap: () => setState(() => _confirmingRemove = s.name),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.close,
+                          size: 14, color: scheme.onSurfaceVariant),
+                    ),
                   ),
-                ),
             ],
           ),
           if (isConnecting) _connectPicker(scheme),
