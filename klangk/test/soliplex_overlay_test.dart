@@ -112,6 +112,25 @@ void main() {
         find.byKey(const ValueKey('soliplex_connect_submit')), findsOneWidget);
   });
 
+  testWidgets('row-level Connect button hides while auth picker is expanded',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    // Row-level Connect is visible before expanding the picker.
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_default')), findsOneWidget);
+    // Expand the auth picker.
+    await tester.tap(find.byKey(const ValueKey('soliplex_connect_default')));
+    await tester.pumpAndSettle();
+    // Row-level Connect should be gone; only the picker's Connect remains.
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_default')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('soliplex_connect_submit')), findsOneWidget);
+  });
+
   // Open-server scenario: /api/login returns {} (no-auth server). Connecting
   // must say "no login required", NOT "Failed to load providers".
   testWidgets('no-auth server (empty /api/login) shows open, not an error',

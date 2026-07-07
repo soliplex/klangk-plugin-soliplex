@@ -1019,7 +1019,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                   child:
                       const Text('Logout', style: TextStyle(fontSize: 12)),
                 )
-              else
+              else if (!isConnecting)
                 TextButton(
                   key: ValueKey('soliplex_connect_${s.name}'),
                   onPressed: widget.plugin.loggingIn
