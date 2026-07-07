@@ -261,6 +261,28 @@ void main() {
       final servers = await plugin.listServers();
       expect(servers.map((s) => s.name), isNot(contains('staging')));
     });
+
+    test('removing a server that is not logged in does not throw', () async {
+      SharedPreferences.setMockInitialValues({});
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({});
+      });
+      await reg.addServer('staging', 'https://staging');
+      final plugin = SoliplexPlugin(registry: reg);
+
+      // Staging is not connected.
+      expect(await plugin.isServerConnected('staging'), isFalse);
+
+      // Remove should succeed without error.
+      final err = await plugin.removeServerFromUi('staging');
+      expect(err, isNull);
+
+      final servers = await plugin.listServers();
+      expect(servers.map((s) => s.name), isNot(contains('staging')));
+    });
   });
 
   group('single-server enforcement', () {
