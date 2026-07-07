@@ -951,12 +951,14 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           elevation: 4,
           borderRadius: BorderRadius.circular(8),
           color: scheme.surface,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          child: MouseRegion(
+            cursor: SystemMouseCursors.basic,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 Row(
                   children: [
                     Icon(Icons.hub, size: 16, color: scheme.onSurface),
@@ -983,6 +985,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
               ],
             ),
           ),
+          ),
         ),
       ),
     );
@@ -992,7 +995,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
     final scheme = Theme.of(context).colorScheme;
     final connected = _connected[s.name] ?? false;
     final isConnecting = _connectingServer == s.name;
-    return Column(
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -1031,6 +1036,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           ),
           if (isConnecting) _connectPicker(scheme),
         ],
+      ),
     );
   }
 
@@ -1082,6 +1088,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                 (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
             return InkWell(
               onTap: () => setState(() => _selectedSystem = e.key),
+              mouseCursor: SystemMouseCursors.click,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
