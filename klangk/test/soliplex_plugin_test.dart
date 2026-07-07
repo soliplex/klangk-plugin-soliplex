@@ -234,6 +234,73 @@ void main() {
     });
   });
 
+  group('single-server enforcement', () {
+    test('connecting to an open server disconnects other connected servers',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        // "default" starts with a valid token (connected).
+        'soliplex_default_access_token': 'tok',
+        'soliplex_default_expires_at':
+            DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+      });
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/login')) return _json({}); // open
+        return http.Response('x', 404);
+      });
+      await reg.addServer('staging', 'https://staging');
+      final plugin = SoliplexPlugin(registry: reg);
+
+      // Default starts connected.
+      expect(await plugin.isServerConnected('default'), isTrue);
+
+      // Connecting to staging (open server) should disconnect default.
+      await plugin.markServerOpenConnected('staging');
+      expect(await plugin.isServerConnected('staging'), isTrue);
+      expect(await plugin.isServerConnected('default'), isFalse);
+    });
+
+    test('connecting to a second open server disconnects the first', () async {
+      SharedPreferences.setMockInitialValues({});
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({});
+      });
+      await reg.addServer('alpha', 'https://alpha');
+      await reg.addServer('beta', 'https://beta');
+      final plugin = SoliplexPlugin(registry: reg);
+
+      await plugin.markServerOpenConnected('alpha');
+      expect(await plugin.isServerConnected('alpha'), isTrue);
+
+      await plugin.markServerOpenConnected('beta');
+      expect(await plugin.isServerConnected('beta'), isTrue);
+      expect(await plugin.isServerConnected('alpha'), isFalse);
+    });
+
+    test('reconnecting the same server does not disconnect it', () async {
+      SharedPreferences.setMockInitialValues({});
+      final reg = registryWith((req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        return _json({});
+      });
+      final plugin = SoliplexPlugin(registry: reg);
+
+      await plugin.markServerOpenConnected('default');
+      expect(await plugin.isServerConnected('default'), isTrue);
+
+      // Marking the same server again should keep it connected.
+      await plugin.markServerOpenConnected('default');
+      expect(await plugin.isServerConnected('default'), isTrue);
+    });
+  });
+
   group('streaming handlers are registered for query and reply', () {
     test('streamingHandlers expose query, query_all + reply', () {
       final plugin = SoliplexPlugin(registry: registryWith(defaultRoutes));
