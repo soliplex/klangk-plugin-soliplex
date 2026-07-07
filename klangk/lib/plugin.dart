@@ -951,9 +951,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           elevation: 4,
           borderRadius: BorderRadius.circular(8),
           color: scheme.surface,
-          child: MouseRegion(
-            cursor: SystemMouseCursors.basic,
-            child: Padding(
+          child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -964,11 +962,14 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                     Icon(Icons.hub, size: 16, color: scheme.onSurface),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text('Soliplex servers',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: scheme.onSurface)),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.basic,
+                        child: Text('Soliplex servers',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: scheme.onSurface)),
+                      ),
                     ),
                     InkWell(
                       key: const ValueKey('soliplex_overlay_close'),
@@ -985,7 +986,6 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
               ],
             ),
           ),
-          ),
         ),
       ),
     );
@@ -995,9 +995,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
     final scheme = Theme.of(context).colorScheme;
     final connected = _connected[s.name] ?? false;
     final isConnecting = _connectingServer == s.name;
-    return MouseRegion(
-      cursor: SystemMouseCursors.basic,
-      child: Column(
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -1006,9 +1004,12 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                   size: 10, color: connected ? Colors.green : scheme.outline),
               const SizedBox(width: 6),
               Expanded(
-                child: Text(s.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.basic,
+                  child: Text(s.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                ),
               ),
               if (connected)
                 TextButton(
@@ -1036,7 +1037,6 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           ),
           if (isConnecting) _connectPicker(scheme),
         ],
-      ),
     );
   }
 
