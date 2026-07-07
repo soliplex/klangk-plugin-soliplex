@@ -1029,8 +1029,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
         children: [
           Row(
             children: [
-              // Remove button (X) before the dot for non-default servers.
-              // Default gets an equal-width spacer so names align.
+              // Remove button (X) or equal-width spacer so names align.
               if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
                 if (_confirmingRemove == s.name)
                   TextButton(
@@ -1056,7 +1055,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                           size: 14, color: scheme.onSurfaceVariant),
                     ),
                   )
-              else if (s.name == SoliplexServerRegistry.defaultName)
+              else
                 const SizedBox(width: 18),
               Icon(Icons.circle,
                   size: 10, color: connected ? Colors.green : scheme.outline),
