@@ -100,6 +100,55 @@ void main() {
         find.byKey(const ValueKey('soliplex_connect_staging')), findsOneWidget);
   });
 
+  testWidgets('remove button appears on user-added servers, not default',
+      (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    // Default server should not have a remove button.
+    expect(
+        find.byKey(const ValueKey('soliplex_remove_default')), findsNothing);
+    // Add a server.
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_toggle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_name')), 'staging');
+    await tester.enterText(find.byKey(const ValueKey('soliplex_add_url')),
+        'https://staging.example');
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
+    await tester.pumpAndSettle();
+    // User-added server should have a remove button.
+    expect(
+        find.byKey(const ValueKey('soliplex_remove_staging')), findsOneWidget);
+  });
+
+  testWidgets('tapping remove button removes the server row', (tester) async {
+    await pumpOverlay(tester, _plugin());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    // Add a server.
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_toggle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('soliplex_add_name')), 'staging');
+    await tester.enterText(find.byKey(const ValueKey('soliplex_add_url')),
+        'https://staging.example');
+    await tester.tap(find.byKey(const ValueKey('soliplex_add_submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('staging'), findsOneWidget);
+    // Remove it.
+    await tester.tap(find.byKey(const ValueKey('soliplex_remove_staging')));
+    await tester.pumpAndSettle();
+    // Server row should be gone.
+    expect(find.text('staging'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('soliplex_remove_staging')), findsNothing);
+    // Default should still be there.
+    expect(find.text('default'), findsOneWidget);
+  });
+
   testWidgets('connect flow loads a server\'s auth systems', (tester) async {
     await pumpOverlay(tester, _plugin());
     await tester.pump();

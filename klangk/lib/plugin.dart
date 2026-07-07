@@ -225,6 +225,25 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     }
   }
 
+  /// Remove a user-added server from the overlay UI. Returns null on success
+  /// or an error message. The bundled `default` server cannot be removed.
+  Future<String?> removeServerFromUi(String name) async {
+    final n = name.trim();
+    if (n.isEmpty) return 'Name is required';
+    if (n == SoliplexServerRegistry.defaultName) {
+      return '"${SoliplexServerRegistry.defaultName}" cannot be removed';
+    }
+    try {
+      await registry.ensureDefault();
+      if (!registry.names.contains(n)) return 'Server "$n" not found';
+      await registry.removeServer(n);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return '$e';
+    }
+  }
+
   bool get authenticated => _authenticated;
   bool get loggingIn => _loggingIn;
 
@@ -891,6 +910,11 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
     await _refreshServers();
   }
 
+  Future<void> _doRemoveServer(String server) async {
+    await widget.plugin.removeServerFromUi(server);
+    await _refreshServers();
+  }
+
   Future<void> _submitAdd() async {
     final err =
         await widget.plugin.addServerFromUi(_nameCtrl.text, _urlCtrl.text);
@@ -1030,6 +1054,16 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                       minimumSize: const Size(0, 28)),
                   child:
                       const Text('Connect', style: TextStyle(fontSize: 12)),
+                ),
+              if (s.name != SoliplexServerRegistry.defaultName && !isConnecting)
+                InkWell(
+                  key: ValueKey('soliplex_remove_${s.name}'),
+                  onTap: () => _doRemoveServer(s.name),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.close,
+                        size: 14, color: scheme.onSurfaceVariant),
+                  ),
                 ),
             ],
           ),
