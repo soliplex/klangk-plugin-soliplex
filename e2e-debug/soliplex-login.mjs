@@ -228,12 +228,14 @@ try {
   await screenshot(page, "03-workspace.png");
   console.log("   Page title:", await page.title());
 
-  // 4. Click the Soliplex widget (top-right circular icon)
+  // 4. Click the Soliplex widget (hub icon in the app bar, left of email chip)
   console.log("5. Clicking Soliplex widget...");
   const box = await fv(page).boundingBox();
   const fvX = box?.x ?? 0;
   const fvY = box?.y ?? 0;
-  await page.mouse.click(fvX + WIDTH - 32, fvY + 80);
+  // The icon is in the app bar row. Approximate position may vary with
+  // window width and email chip length — adjust if the click misses.
+  await page.mouse.click(fvX + WIDTH - 200, fvY + 28);
   await page.waitForTimeout(2000);
   await screenshot(page, "05-soliplex-overlay.png");
 

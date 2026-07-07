@@ -107,6 +107,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   bool _authenticated = false;
   bool _loggingIn = false;
   String? _loginError;
+  bool _overlayExpanded = false;
 
   /// In-memory conversation history per [ThreadKey] (serverId, roomId,
   /// threadId), so multi-turn [soliplex_reply] turns carry context (the AG-UI
@@ -247,6 +248,12 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
 
   bool get authenticated => _authenticated;
   bool get loggingIn => _loggingIn;
+  bool get overlayExpanded => _overlayExpanded;
+
+  void toggleOverlay() {
+    _overlayExpanded = !_overlayExpanded;
+    notifyListeners();
+  }
 
   /// OIDC auth systems available on [server] (for the connect overlay).
   Future<Map<String, dynamic>> getAuthSystems(
@@ -276,10 +283,18 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
         'soliplex_reply': _replyStream,
       };
 
+  late final _appBarAction = _SoliplexAppBarIcon(
+    key: const ValueKey('soliplex_app_bar_icon'),
+    plugin: this,
+  );
+
   late final _overlay = _SoliplexAuthOverlay(
     key: const ValueKey('soliplex_auth_overlay'),
     plugin: this,
   );
+
+  @override
+  Widget? buildAppBarAction(BuildContext context) => _appBarAction;
 
   @override
   Widget? buildOverlay(BuildContext context) => _overlay;
@@ -788,10 +803,54 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
   }
 }
 
-/// Compact multi-server overlay: a single color-coded icon (tinted when any
-/// server is connected) that expands to a per-server status list with
-/// connect/logout actions and an "add server" form. Per the architecture there
-/// is no global "active server" — the agent names the server per tool call.
+/// App bar icon: a compact hub icon that toggles the overlay panel. Tinted
+/// when any server is connected.
+class _SoliplexAppBarIcon extends StatefulWidget {
+  final SoliplexPlugin plugin;
+  const _SoliplexAppBarIcon({super.key, required this.plugin});
+
+  @override
+  State<_SoliplexAppBarIcon> createState() => _SoliplexAppBarIconState();
+}
+
+class _SoliplexAppBarIconState extends State<_SoliplexAppBarIcon> {
+  @override
+  void initState() {
+    super.initState();
+    widget.plugin.addListener(_onUpdate);
+  }
+
+  @override
+  void dispose() {
+    widget.plugin.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = widget.plugin.authenticated;
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      key: const ValueKey('soliplex_overlay_icon'),
+      icon: Icon(
+        Icons.hub,
+        size: 20,
+        color: connected ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+      tooltip: 'Soliplex servers',
+      onPressed: widget.plugin.toggleOverlay,
+    );
+  }
+}
+
+/// Expanded overlay panel: per-server status list with connect/logout actions
+/// and an "add server" form. Shown when the app bar icon is tapped. Per the
+/// architecture there is no global "active server" — the agent names the
+/// server per tool call.
 class _SoliplexAuthOverlay extends StatefulWidget {
   final SoliplexPlugin plugin;
   const _SoliplexAuthOverlay({super.key, required this.plugin});
@@ -801,7 +860,7 @@ class _SoliplexAuthOverlay extends StatefulWidget {
 }
 
 class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
-  bool _expanded = false;
+  bool get _expanded => widget.plugin.overlayExpanded;
 
   List<SoliplexServer> _servers = const [];
   final Map<String, bool> _connected = {};
@@ -858,8 +917,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   }
 
   Future<void> _toggleExpand() async {
-    _expanded = !_expanded;
-    if (mounted) setState(() {});
+    widget.plugin.toggleOverlay();
     if (_expanded) await _refreshServers();
   }
 
@@ -939,36 +997,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    if (!_expanded) {
-      // Collapsed: a single icon, tinted when any server is connected.
-      final connected = widget.plugin.authenticated;
-      return Positioned(
-        top: 8,
-        right: 8,
-        child: Material(
-          key: const ValueKey('soliplex_overlay_icon'),
-          elevation: 4,
-          shape: const CircleBorder(),
-          color: connected
-              ? scheme.primaryContainer
-              : scheme.surfaceContainerHighest,
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: _toggleExpand,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Icon(
-                Icons.hub,
-                size: 18,
-                color: connected
-                    ? scheme.onPrimaryContainer
-                    : scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+    if (!_expanded) return const SizedBox.shrink();
 
     return Positioned(
       top: 8,
