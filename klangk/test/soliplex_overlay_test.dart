@@ -24,17 +24,26 @@ http.Response _routes(http.Request req) {
   return http.Response('x', 404);
 }
 
-/// Pump the plugin's overlay inside a minimal app. A [Builder] supplies a real
-/// BuildContext to buildOverlay.
+/// Pump the plugin's app bar icon + overlay inside a minimal app, mirroring
+/// how klangk renders them: icon in AppBar.actions, overlay in body Stack.
 Future<void> pumpOverlay(WidgetTester tester, SoliplexPlugin plugin) =>
     tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Stack(
-          children: [
-            Builder(builder: (context) => plugin.buildOverlay(context)!),
-          ],
-        ),
-      ),
+      home: Builder(builder: (context) {
+        return Scaffold(
+          appBar: AppBar(
+            actions: [
+              if (plugin.buildAppBarAction(context) != null)
+                plugin.buildAppBarAction(context)!,
+            ],
+          ),
+          body: Stack(
+            children: [
+              if (plugin.buildOverlay(context) != null)
+                plugin.buildOverlay(context)!,
+            ],
+          ),
+        );
+      }),
     ));
 
 SoliplexPlugin _plugin() => SoliplexPlugin(
@@ -47,7 +56,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('collapsed: renders the single hub icon', (tester) async {
+  testWidgets('app bar: renders the hub icon', (tester) async {
     await pumpOverlay(tester, _plugin());
     await tester.pump();
     expect(find.byKey(_iconKey), findsOneWidget);
