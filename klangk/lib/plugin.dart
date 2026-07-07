@@ -951,7 +951,8 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
           elevation: 4,
           borderRadius: BorderRadius.circular(8),
           color: scheme.surface,
-          child: Padding(
+          child: SelectionContainer.disabled(
+            child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -962,14 +963,11 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                     Icon(Icons.hub, size: 16, color: scheme.onSurface),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.basic,
-                        child: Text('Soliplex servers',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: scheme.onSurface)),
-                      ),
+                      child: Text('Soliplex servers',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: scheme.onSurface)),
                     ),
                     InkWell(
                       key: const ValueKey('soliplex_overlay_close'),
@@ -985,6 +983,7 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                 if (_showAdd) _addForm(scheme) else _addToggle(scheme),
               ],
             ),
+          ),
           ),
         ),
       ),
@@ -1004,12 +1003,9 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                   size: 10, color: connected ? Colors.green : scheme.outline),
               const SizedBox(width: 6),
               Expanded(
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.basic,
-                  child: Text(s.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-                ),
+                child: Text(s.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurface)),
               ),
               if (connected)
                 TextButton(
@@ -1088,7 +1084,6 @@ class _SoliplexAuthOverlayState extends State<_SoliplexAuthOverlay> {
                 (e.value as Map<String, dynamic>)['title'] as String? ?? e.key;
             return InkWell(
               onTap: () => setState(() => _selectedSystem = e.key),
-              mouseCursor: SystemMouseCursors.click,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
