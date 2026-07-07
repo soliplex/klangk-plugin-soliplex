@@ -236,6 +236,7 @@ class SoliplexPlugin extends ToolPlugin with ChangeNotifier {
     try {
       await registry.ensureDefault();
       if (!registry.names.contains(n)) return 'Server "$n" not found';
+      await logout(server: n);
       await registry.removeServer(n);
       notifyListeners();
       return null;
